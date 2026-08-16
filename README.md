@@ -1185,6 +1185,45 @@ RWM 採用 Multi-Source、Local-First、CLI-First 的架構。網路主要用於
 
 而是「讓 Minecraft 世界真正建立在地球上」。 🌍⛏️
 
+## 🌍 World Data Sources
+
+RWM generates Minecraft worlds using publicly available
+geospatial datasets and services.
+
+### OpenStreetMap (OSM)
+Used for:
+- Roads
+- Buildings
+- Water features
+- Other mapped geographic objects
+
+### Overture Maps
+Used for:
+- Building / geographic feature data
+- Additional real-world map objects
+
+### Mapterhorn
+Used for:
+- Elevation / terrain data
+
+### ESA WorldCover 2021
+Used for:
+- Land-cover classification
+- Surface / terrain material inference
+
+RWM does not use a proprietary world database.
+Data is fetched from the corresponding public/
+third-party services during generation.
+
+## ⚖️ Data & Attribution
+
+RWM itself does not own the underlying geographic data.
+The generated world may contain data originating from
+third-party datasets.
+
+Users are responsible for complying with the licenses,
+terms of use, attribution requirements, and usage policies
+of the respective data providers.
 
 
 #📬 聯繫創作者
