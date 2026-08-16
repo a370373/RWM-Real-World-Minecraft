@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "source": "manual curation (never overwritten by refresh_wikidata_index)",
+  "license_policy": "permissive-only: CC0, Public Domain, CC BY (any version)",
+  "models": {
+    "Q9202": {
+      "label": "Statue of Liberty",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Statue_of_Liberty.stl",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "artist": "XRH",
+      "height_m": 186.0,
+      "palette_layers": [
+        {
+          "y_max_frac": 0.39,
+          "hex": "AB9371"
+        },
+        {
+          "y_max_frac": 0.95,
+          "blocks": [
+            "WAXED_OXIDIZED_COPPER"
+          ]
+        },
+        {
+          "y_max_frac": 1.0,
+          "hex": "F3E370"
+        }
+      ],
+      "bundled_filename": "statue_of_liberty.stl"
+    },
+    "Q79961": {
+      "label": "Christ the Redeemer",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Christ_the_Redeemer.stl",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "artist": "XRH",
+      "height_m": 110.0,
+      "palette_layers": [
+        {
+          "y_max_frac": 0.22,
+          "blocks": [
+            "MUD_BRICKS"
+          ]
+        },
+        {
+          "y_max_frac": 1.0,
+          "blocks": [
+            "LIGHT_GRAY_CONCRETE"
+          ]
+        }
+      ],
+      "bundled_filename": "christ_the_redeemer.stl"
+    },
+    "Q41225": {
+      "label": "Big Ben",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Big%20Ben.stl",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0",
+      "artist": "Microsoft",
+      "height_m": 96.0,
+      "palette_layers": [
+        {
+          "y_max_frac": 1.0,
+          "blocks": [
+            "SANDSTONE",
+            "SMOOTH_SANDSTONE"
+          ]
+        }
+      ],
+      "bundled_filename": "big_ben.stl"
+    }
+  }
+}

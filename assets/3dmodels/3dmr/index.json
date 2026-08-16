@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "repository": "RWM Local 3DMR Model Repository",
+  "source": "3DMR",
+  "runtime_network_access": false,
+  "models": {}
+}

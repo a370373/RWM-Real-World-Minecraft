@@ -1,0 +1,151 @@
+use crate::args::OutsideTerrain;
+use crate::block_definitions::{DIRT, GRASS_BLOCK, SAND, SANDSTONE, SNOW_BLOCK, STONE, WATER};
+use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
+use crate::ground::Ground;
+use crate::world_editor::WorldEditor;
+
+/// Generate configurable deterministic terrain outside the authoritative RWM bbox.
+///
+/// The generated area is:
+///   bbox expanded by `padding` blocks
+///
+/// The authoritative RWM area is NEVER overwritten.
+///
+/// Supported terrain:
+///   Void       -> completely empty
+///   Normal     -> grass + dirt + stone
+///   Ocean      -> water + sand + sandstone
+///   Superflat  -> grass + dirt
+///   Desert     -> sand + sandstone
+///   Snow       -> snow + dirt + stone
+///   Mountains  -> stone + dirt + grass, using Ground elevation
+pub fn generate_outside_terrain(
+    editor: &mut WorldEditor,
+    ground: &Ground,
+    bbox: &XZBBox,
+    padding: i32,
+    terrain: OutsideTerrain,
+) {
+    if padding <= 0 {
+        return;
+    }
+
+    let min_x = bbox.min_x() - padding;
+    let max_x = bbox.max_x() + padding;
+    let min_z = bbox.min_z() - padding;
+    let max_z = bbox.max_z() + padding;
+
+    for x in min_x..=max_x {
+        for z in min_z..=max_z {
+            let point = XZPoint::new(x, z);
+
+            // NEVER overwrite authoritative RWM terrain.
+            if bbox.contains(&point) {
+                continue;
+            }
+
+            match terrain {
+                OutsideTerrain::Void => {
+                    // Intentionally empty.
+                }
+
+                OutsideTerrain::Normal => {
+                    let ground_y = ground.level(point);
+
+                    fill_column(editor, x, z, ground_y, STONE, DIRT, GRASS_BLOCK);
+                }
+
+                OutsideTerrain::Ocean => {
+                    let water_y = ground.level(point);
+
+                    // Ocean floor.
+                    editor.fill_outside_column(x, z, water_y - 4, water_y - 2, SANDSTONE);
+
+                    editor.fill_outside_column(x, z, water_y - 1, water_y - 1, SAND);
+
+                    // Water surface + water column.
+                    editor.fill_outside_column(x, z, water_y, water_y + 8, WATER);
+                }
+
+                OutsideTerrain::Superflat => {
+                    let ground_y = 64;
+
+                    // Classic simple superflat:
+                    // stone 0..59
+                    // dirt 60..63
+                    // grass 64
+                    editor.fill_outside_column(x, z, ground_y - 4, ground_y - 1, DIRT);
+
+                    editor.fill_outside_column(x, z, ground_y - 32, ground_y - 5, STONE);
+
+                    editor.set_outside_block_absolute(GRASS_BLOCK, x, ground_y, z);
+                }
+
+                OutsideTerrain::Desert => {
+                    let ground_y = ground.level(point);
+
+                    // Stone/sandstone foundation.
+                    editor.fill_outside_column(x, z, ground_y - 8, ground_y - 5, SANDSTONE);
+
+                    // Sand layers.
+                    editor.fill_outside_column(x, z, ground_y - 4, ground_y, SAND);
+                }
+
+                OutsideTerrain::Snow => {
+                    let ground_y = ground.level(point);
+
+                    fill_column(editor, x, z, ground_y, STONE, DIRT, SNOW_BLOCK);
+                }
+
+                OutsideTerrain::Mountains => {
+                    let ground_y = mountain_height(ground, point);
+
+                    // Deep stone.
+                    editor.fill_outside_column(x, z, ground_y - 16, ground_y - 4, STONE);
+
+                    // Dirt layer.
+                    editor.fill_outside_column(x, z, ground_y - 3, ground_y - 1, DIRT);
+
+                    // Grass surface.
+                    editor.set_outside_block_absolute(GRASS_BLOCK, x, ground_y, z);
+                }
+            }
+        }
+    }
+}
+
+/// Normal terrain column.
+fn fill_column(
+    editor: &mut WorldEditor,
+    x: i32,
+    z: i32,
+    ground_y: i32,
+    deep_block: crate::block_definitions::Block,
+    under_block: crate::block_definitions::Block,
+    surface_block: crate::block_definitions::Block,
+) {
+    editor.fill_outside_column(x, z, ground_y - 4, ground_y - 2, deep_block);
+
+    editor.set_outside_block_absolute(under_block, x, ground_y - 1, z);
+
+    editor.set_outside_block_absolute(surface_block, x, ground_y, z);
+}
+
+/// Deterministic mountain height.
+///
+/// Uses the existing Ground elevation as the base and adds a
+/// smooth deterministic wave outside the authoritative bbox.
+fn mountain_height(ground: &Ground, point: XZPoint) -> i32 {
+    let base = ground.level(point);
+
+    let x = point.x as f64;
+    let z = point.z as f64;
+
+    let wave1 = (x * 0.004).sin() * 32.0;
+    let wave2 = (z * 0.006).cos() * 24.0;
+    let wave3 = ((x + z) * 0.0025).sin() * 18.0;
+
+    let height = base as f64 + wave1 + wave2 + wave3;
+
+    height.round() as i32
+}
