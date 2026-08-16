@@ -78,7 +78,10 @@ pub fn generate_outside_terrain(
                 }
 
                 OutsideTerrain::Superflat => {
-                    let ground_y = 64;
+                    let ground_y = ground.level(XZPoint::new(
+                        (bbox.min_x() + bbox.max_x()) / 2,
+                        (bbox.min_z() + bbox.max_z()) / 2,
+                    ));
 
                     // Classic simple superflat:
                     // stone 32 blocks below the surface
