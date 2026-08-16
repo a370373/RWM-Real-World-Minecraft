@@ -1188,18 +1188,13 @@ RWM 採用 Multi-Source、Local-First、CLI-First 的架構。網路主要用於
 
 
 #📬 聯繫創作者
-Instagram：[a370373](https://www.instagram.com/a370373)
+
+Instagram：[a370373/XRH](https://instagram.com/a370373)
 
 #🤖 AI 協作
 
-RWM 在開發過程中與 OpenAI 的 ChatGPT 進行協作。
+RWM 由 a370373/XRH 發起、設計與開發。
 
-ChatGPT 主要協助：
+開發過程中使用 OpenAI ChatGPT 作為 AI 協作夥伴，協助進行 技術分析、程式碼檢查、除錯 & 文件整理。
 
-- 💻 程式碼 分析 & 除錯
-- 🔧 技術問題 分析 & 開發協助
-- 🧩 功能實作 & 技術討論
-- 📝 README 撰寫
-- 🔍 程式架構分析 & 檢查
-
-RWM 的 產品定位、產品設計、核心理念 與 最終功能決策由專案創作者[a370373/XRH]負責。
+產品方向、設計理念 & 最終決策由專案創作者負責。
