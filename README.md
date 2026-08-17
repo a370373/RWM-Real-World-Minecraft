@@ -1,4 +1,4 @@
-##🗺️ RWM — Real World Minecraft
+## 🗺️ RWM — Real World Minecraft
 
 «讓 Minecraft 世界建立在真實地球的空間尺度上。»
 
