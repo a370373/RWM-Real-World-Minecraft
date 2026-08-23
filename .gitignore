@@ -1,0 +1,38 @@
+target/
+backup/
+*_backup_*/
+upgrade*_backup_*/
+README.md
+*.png
+parsed_osm_data.txt
+
+*fix*
+*debug*
+*test_output*
+
+# Development backups
+.upgrade-backup/
+backup_*/
+*_backup_*/
+upgrade*_backup_*/
+
+# Build output
+/target/
+/bin/
+
+# Local/debug output
+*.png
+parsed_osm_data.txt
+
+# Backups
+/backup/
+/backup_*/
+/upgrade*_backup_*/
+**/*_backup_*/
+**/*.bak
+
+# Historical source snapshots
+**/*.before-*
+**/*.pre_*
+README.md
+**/*.bak-*
