@@ -61,52 +61,83 @@ pub fn allocate_rooms(profile: &BuildingProfile, daylight: &FacadeDaylight) -> R
     let mut rooms = Vec::new();
     let mut used_area = 0i32;
 
-    for requirement in requirements {
+    /*
+     * Allocate higher-priority semantic requirements first.
+     *
+     * This is important because room_profile() describes semantics,
+     * not physical placement order. High-priority rooms must get
+     * first access to the real building's available area.
+     */
+    let mut ordered_requirements = requirements;
+    ordered_requirements.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| b.min_area.cmp(&a.min_area))
+    });
+
+    for requirement in ordered_requirements {
         if requirement.min_count == 0 {
             continue;
         }
 
         /*
-         * Estimate how many instances can realistically fit.
+         * Calculate capacity from the ACTUAL remaining area.
          *
-         * The building type defines the semantic range.
-         * The actual building footprint limits the result.
+         * Never use the original building area here once other rooms
+         * have already consumed part of it.
          */
-        let max_by_area = (available_area / requirement.min_area.max(1)).max(1) as usize;
+        let remaining_area = (available_area - used_area).max(0);
+
+        let max_by_remaining =
+            (remaining_area / requirement.min_area.max(1)) as usize;
+
+        /*
+         * If even the minimum semantic count cannot fit anymore,
+         * skip this requirement rather than manufacturing impossible
+         * rooms or making the entire allocation fail.
+         */
+        if max_by_remaining < requirement.min_count {
+            continue;
+        }
 
         let target_count = requirement
             .max_count
-            .min(max_by_area)
-            .max(requirement.min_count);
+            .min(max_by_remaining);
 
         for index in 0..target_count {
-            /*
-             * Do not blindly consume the whole building.
-             *
-             * Lower-priority rooms are allowed to disappear when
-             * the real building is too small.
-             */
             let remaining = available_area - used_area;
 
-            if index >= requirement.min_count && remaining < requirement.min_area {
+            if remaining < requirement.min_area {
                 break;
             }
 
-            if remaining < requirement.min_area && rooms.len() > 0 {
+            /*
+             * Once the minimum semantic count has been satisfied,
+             * additional instances are optional and only consume
+             * genuinely available area.
+             */
+            if index >= requirement.min_count
+                && remaining < requirement.min_area
+            {
                 break;
             }
 
-            let (min_width, min_depth) = minimum_dimensions(requirement.min_area);
+            let (min_width, min_depth) =
+                minimum_dimensions(requirement.min_area);
 
             let daylight_required =
-                daylight.total() > 0.0 && naturally_lit_room(requirement.room_type);
+                daylight.total() > 0.0
+                    && naturally_lit_room(requirement.room_type);
 
             rooms.push(RoomAllocation {
                 room_type: requirement.room_type,
                 required_area: requirement.min_area,
                 min_width,
                 min_depth,
-                preferred_floor: preferred_floor(profile, requirement.room_type),
+                preferred_floor: preferred_floor(
+                    profile,
+                    requirement.room_type,
+                ),
                 daylight_required,
                 priority: requirement.priority,
             });

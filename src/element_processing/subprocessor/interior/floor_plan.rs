@@ -64,14 +64,37 @@ impl FloorPlan {
             return false;
         }
 
-        self.rooms.iter().all(|room| {
+        // Every room must remain inside the reconstructed building bounds
+        // and satisfy the minimum geometric size.
+        if !self.rooms.iter().all(|room| {
             room.bounds.min_x >= self.bounds.min_x
                 && room.bounds.max_x <= self.bounds.max_x
                 && room.bounds.min_z >= self.bounds.min_z
                 && room.bounds.max_z <= self.bounds.max_z
                 && room.bounds.width() >= 2
                 && room.bounds.depth() >= 2
-        })
+        }) {
+            return false;
+        }
+
+        // Rooms must never overlap.
+        for i in 0..self.rooms.len() {
+            for j in (i + 1)..self.rooms.len() {
+                let a = self.rooms[i].bounds;
+                let b = self.rooms[j].bounds;
+
+                let overlaps_x = a.min_x <= b.max_x && b.min_x <= a.max_x;
+                let overlaps_z = a.min_z <= b.max_z && b.min_z <= a.max_z;
+
+                if overlaps_x && overlaps_z {
+                    return false;
+                }
+            }
+        }
+
+        // A valid floor plan must cover the complete reconstructed
+        // building footprint. Gaps are not silently accepted.
+        self.total_room_area() == self.bounds.area()
     }
 }
 
@@ -255,19 +278,35 @@ pub fn generate_spatial_floor_plan(
         if rooms_left == 1 {
             let score = score_room(remaining, allocation, constraints, floor);
 
-            if score == i32::MIN {
-                return None;
+            if score != i32::MIN {
+                plan.rooms.push(Room {
+                    room_type: allocation.room_type,
+                    bounds: remaining,
+                });
+                remaining = Rect {
+                    min_x: remaining.min_x,
+                    min_z: remaining.min_z,
+                    max_x: remaining.min_x - 1,
+                    max_z: remaining.min_z - 1,
+                };
             }
-
-            plan.rooms.push(Room {
-                room_type: allocation.room_type,
-                bounds: remaining,
-            });
 
             break;
         }
 
-        let candidate = find_best_split(remaining, allocation, constraints, rooms_left, floor)?;
+        let Some(candidate) = find_best_split(
+            remaining,
+            allocation,
+            constraints,
+            &ordered[index + 1..],
+            floor,
+        ) else {
+            // Partial-success policy:
+            // A single room that cannot be placed must not invalidate
+            // the entire interior plan. Keep all rooms already placed
+            // and allow later allocations to try the remaining space.
+            continue;
+        };
 
         plan.rooms.push(Room {
             room_type: allocation.room_type,
@@ -275,6 +314,17 @@ pub fn generate_spatial_floor_plan(
         });
 
         remaining = candidate.remaining;
+    }
+
+    // Partial-success policy:
+    // Successfully generated rooms are always preserved.
+    // Any unresolved remaining footprint becomes a neutral Corridor
+    // instead of invalidating the entire interior plan.
+    if remaining.area() > 0 && remaining.can_fit(2, 2) {
+        plan.rooms.push(Room {
+            room_type: RoomType::Corridor,
+            bounds: remaining,
+        });
     }
 
     plan.is_valid().then_some(plan)
@@ -291,12 +341,11 @@ fn find_best_split(
     remaining: Rect,
     allocation: &RoomAllocation,
     constraints: &SpatialConstraints,
-    rooms_left: usize,
+    remaining_allocations: &[RoomAllocation],
     floor: i32,
 ) -> Option<SplitCandidate> {
     let mut best: Option<SplitCandidate> = None;
 
-    let minimum_remaining = ((rooms_left - 1) as i32) * 2;
 
     // ---------------------------------------------------------
     // X AXIS CANDIDATES
@@ -304,7 +353,7 @@ fn find_best_split(
 
     let min_x_split = allocation.min_width.max(2);
 
-    let max_x_split = remaining.width() - minimum_remaining - 1;
+    let max_x_split = remaining.width() - 2;
 
     if min_x_split <= max_x_split {
         for width in min_x_split..=max_x_split {
@@ -324,7 +373,7 @@ fn find_best_split(
                 max_z: remaining.max_z,
             };
 
-            if !next.can_fit(2, 2) {
+            if !can_reserve_remaining_space(next, remaining_allocations) {
                 continue;
             }
 
@@ -347,7 +396,7 @@ fn find_best_split(
 
     let min_z_split = allocation.min_depth.max(2);
 
-    let max_z_split = remaining.depth() - minimum_remaining - 1;
+    let max_z_split = remaining.depth() - 2;
 
     if min_z_split <= max_z_split {
         for depth in min_z_split..=max_z_split {
@@ -367,7 +416,7 @@ fn find_best_split(
                 max_z: remaining.max_z,
             };
 
-            if !next.can_fit(2, 2) {
+            if !can_reserve_remaining_space(next, remaining_allocations) {
                 continue;
             }
 
@@ -385,6 +434,38 @@ fn find_best_split(
     }
 
     best
+}
+
+fn can_reserve_remaining_space(
+    remaining: Rect,
+    allocations: &[RoomAllocation],
+) -> bool {
+    if allocations.is_empty() {
+        return true;
+    }
+
+    let required_area: i32 = allocations
+        .iter()
+        .map(|room| room.required_area.max(1))
+        .sum();
+
+    if remaining.area() < required_area {
+        return false;
+    }
+
+    let max_width = allocations
+        .iter()
+        .map(|room| room.min_width.max(2))
+        .max()
+        .unwrap_or(2);
+
+    let max_depth = allocations
+        .iter()
+        .map(|room| room.min_depth.max(2))
+        .max()
+        .unwrap_or(2);
+
+    remaining.can_fit(max_width, max_depth)
 }
 
 fn consider_candidate(best: &mut Option<SplitCandidate>, candidate: SplitCandidate) {

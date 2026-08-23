@@ -431,7 +431,13 @@ fn room_inside(room: Rect, bounds: Rect) -> bool {
 }
 
 fn point_touches_rect(room: Rect, x: i32, z: i32) -> bool {
-    room.contains(x, z) || x == room.min_x || x == room.max_x || z == room.min_z || z == room.max_z
+    // A window/entrance is associated with a room only when its
+    // mapped point actually lies on or inside that room rectangle.
+    //
+    // Do not compare individual axes independently: doing so would
+    // incorrectly associate unrelated windows/entrances that merely
+    // share the same X or Z coordinate.
+    room.contains(x, z)
 }
 
 fn is_entrance_room(room_type: RoomType) -> bool {
