@@ -214,6 +214,27 @@ pub fn generate_floor_plan(bounds: Rect, rooms: &[(RoomType, i32)]) -> Option<Fl
         }
     }
 
+    // Partial-success policy:
+    // A failed semantic room allocation must never discard the
+    // successfully generated interior layout.
+    //
+    // Any unresolved footprint is converted into a neutral Corridor
+    // so the FloorPlan remains spatially complete and downstream
+    // Doorway / RoomGraph / Vertical Access systems still receive
+    // a valid plan.
+    if remaining.area() > 0 {
+        if remaining.can_fit(2, 2) {
+            plan.rooms.push(Room {
+                room_type: RoomType::Corridor,
+                bounds: remaining,
+            });
+        } else {
+            // Tiny unresolved fragments are intentionally absorbed
+            // by the existing valid room layout rather than causing
+            // the whole building interior to fail.
+        }
+    }
+
     plan.is_valid().then_some(plan)
 }
 
