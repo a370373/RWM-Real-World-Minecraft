@@ -10,39 +10,80 @@ pub enum BuildingType {
     Shop,
     Supermarket,
     Mall,
+    DepartmentStore,
+    ConvenienceStore,
+    RetailStore,
     Restaurant,
     Cafe,
     FastFood,
+    Bakery,
+    Bar,
+    Pub,
+    FoodCourt,
     Hotel,
+    Motel,
+    Hostel,
+    GuestHouse,
+    ShoppingCenter,
+    Market,
 
     // Office
     Office,
     Government,
     Corporate,
+    Bank,
+    Financial,
+    Coworking,
+    Police,
+    FireStation,
+    Courthouse,
+    Embassy,
 
     // Education
     School,
     Kindergarten,
     College,
     University,
+    HighSchool,
+    ElementarySchool,
+    TrainingCenter,
+    ResearchInstitute,
 
     // Healthcare
     Hospital,
     Clinic,
     Pharmacy,
     NursingHome,
+    DentalClinic,
+    VeterinaryClinic,
+    MedicalCenter,
+    Laboratory,
+    RehabilitationCenter,
 
     // Industrial
     Factory,
     Warehouse,
     Workshop,
     IndustrialGeneric,
+    ManufacturingPlant,
+    DistributionCenter,
+    LogisticsCenter,
+    Depot,
+    PowerPlant,
+    WaterPlant,
 
     // Public
     Library,
     Museum,
     CommunityCenter,
     PublicBuilding,
+    TownHall,
+    SportsCenter,
+    Stadium,
+    Theater,
+    Cinema,
+    ConventionCenter,
+    CulturalCenter,
 
     // Religious
     Church,
@@ -54,18 +95,35 @@ pub enum BuildingType {
     Station,
     Terminal,
     TransportBuilding,
+    TrainStation,
+    BusStation,
+    Airport,
+    AirportTerminal,
+    SubwayStation,
+    FerryTerminal,
+    ParkingStructure,
 
     // Agricultural
     Barn,
     Stable,
     FarmBuilding,
+    AgriculturalWarehouse,
+    GreenhouseFacility,
+    LivestockBuilding,
+    DairyBuilding,
 
     // Special
     Garage,
+    ParkingGarage,
     Shed,
     Greenhouse,
     Tower,
+    Skyscraper,
+    Landmark,
     Historic,
+    Castle,
+    Manor,
+    Villa,
 
     Unknown,
 }
@@ -79,98 +137,173 @@ impl BuildingType {
         office: Option<&str>,
         healthcare: Option<&str>,
     ) -> Self {
-        let values = [building, building_use, amenity, shop, office, healthcare];
+        let b = building.unwrap_or("").to_ascii_lowercase();
+        let u = building_use.unwrap_or("").to_ascii_lowercase();
+        let a = amenity.unwrap_or("").to_ascii_lowercase();
+        let s = shop.unwrap_or("").to_ascii_lowercase();
+        let o = office.unwrap_or("").to_ascii_lowercase();
+        let h = healthcare.unwrap_or("").to_ascii_lowercase();
 
-        let matches_any = |needles: &[&str]| {
-            values.iter().flatten().any(|value| {
-                let value = value.to_ascii_lowercase();
-                needles.iter().any(|needle| value.contains(needle))
-            })
+        let has = |values: &[&str]| {
+            values
+                .iter()
+                .any(|v| b == *v || u == *v || a == *v || s == *v || o == *v || h == *v)
         };
 
         // Education
-        if matches_any(&["university"]) {
+        if has(&["university"]) {
             return Self::University;
         }
-
-        if matches_any(&["college"]) {
+        if has(&["college"]) {
             return Self::College;
         }
-
-        if matches_any(&["kindergarten", "nursery"]) {
+        if has(&["kindergarten", "nursery"]) {
             return Self::Kindergarten;
         }
-
-        if matches_any(&["school"]) {
+        if has(&["high_school"]) {
+            return Self::HighSchool;
+        }
+        if has(&["elementary_school"]) {
+            return Self::ElementarySchool;
+        }
+        if has(&["school"]) {
             return Self::School;
+        }
+        if has(&["training", "training_center"]) {
+            return Self::TrainingCenter;
+        }
+        if has(&["research_institute"]) {
+            return Self::ResearchInstitute;
         }
 
         // Healthcare
-        if matches_any(&["hospital"]) {
+        if has(&["hospital"]) {
             return Self::Hospital;
         }
-
-        if matches_any(&["clinic", "doctors", "medical"]) {
+        if has(&["clinic", "doctors", "medical"]) {
             return Self::Clinic;
         }
-
-        if matches_any(&["pharmacy", "chemist"]) {
+        if has(&["pharmacy", "chemist"]) {
             return Self::Pharmacy;
         }
-
-        if matches_any(&["nursing_home", "care_home"]) {
+        if has(&["nursing_home", "care_home"]) {
             return Self::NursingHome;
         }
+        if has(&["dentist", "dental"]) {
+            return Self::DentalClinic;
+        }
+        if has(&["veterinary", "veterinary_clinic"]) {
+            return Self::VeterinaryClinic;
+        }
+        if has(&["medical_centre", "medical_center"]) {
+            return Self::MedicalCenter;
+        }
+        if has(&["laboratory", "lab"]) {
+            return Self::Laboratory;
+        }
+        if has(&["rehabilitation"]) {
+            return Self::RehabilitationCenter;
+        }
 
-        // Food / Restaurant
-        if matches_any(&["fast_food"]) {
+        // Food / hospitality
+        if has(&["fast_food"]) {
             return Self::FastFood;
         }
-
-        if matches_any(&["restaurant"]) {
+        if has(&["restaurant"]) {
             return Self::Restaurant;
         }
-
-        if matches_any(&["cafe", "coffee_shop"]) {
+        if has(&["cafe", "coffee_shop"]) {
             return Self::Cafe;
+        }
+        if has(&["bakery"]) {
+            return Self::Bakery;
+        }
+        if has(&["bar"]) {
+            return Self::Bar;
+        }
+        if has(&["pub"]) {
+            return Self::Pub;
+        }
+        if has(&["food_court"]) {
+            return Self::FoodCourt;
+        }
+
+        if has(&["hotel"]) {
+            return Self::Hotel;
+        }
+        if has(&["motel"]) {
+            return Self::Motel;
+        }
+        if has(&["hostel"]) {
+            return Self::Hostel;
+        }
+        if has(&["guest_house"]) {
+            return Self::GuestHouse;
         }
 
         // Commercial
-        if matches_any(&["supermarket", "hypermarket"]) {
+        if has(&["supermarket", "hypermarket"]) {
             return Self::Supermarket;
         }
-
-        if matches_any(&["mall", "shopping_centre", "shopping_center"]) {
+        if has(&["department_store"]) {
+            return Self::DepartmentStore;
+        }
+        if has(&["convenience"]) {
+            return Self::ConvenienceStore;
+        }
+        if has(&["retail"]) {
+            return Self::RetailStore;
+        }
+        if has(&["shopping_centre", "shopping_center", "mall"]) {
             return Self::Mall;
         }
-
-        if matches_any(&["convenience", "department_store", "retail", "shop"]) {
+        if has(&["market"]) {
+            return Self::Market;
+        }
+        if has(&["shop"]) {
             return Self::Shop;
         }
 
-        // Office
-        if matches_any(&["government"]) {
+        // Office / institutional
+        if has(&["government"]) {
             return Self::Government;
         }
-
-        if matches_any(&["office", "commercial"]) {
+        if has(&["bank"]) {
+            return Self::Bank;
+        }
+        if has(&["financial"]) {
+            return Self::Financial;
+        }
+        if has(&["coworking"]) {
+            return Self::Coworking;
+        }
+        if has(&["police"]) {
+            return Self::Police;
+        }
+        if has(&["fire_station"]) {
+            return Self::FireStation;
+        }
+        if has(&["courthouse"]) {
+            return Self::Courthouse;
+        }
+        if has(&["embassy"]) {
+            return Self::Embassy;
+        }
+        if has(&["corporate", "company"]) {
+            return Self::Corporate;
+        }
+        if has(&["office", "commercial"]) {
             return Self::Office;
         }
 
-        if matches_any(&["company", "corporate"]) {
-            return Self::Corporate;
-        }
-
         // Residential
-        if matches_any(&["apartments", "apartment"]) {
+        if has(&["apartments", "apartment"]) {
             return Self::Apartment;
         }
-
-        if matches_any(&["dormitory", "student_accommodation"]) {
+        if has(&["dormitory", "student_accommodation"]) {
             return Self::Dormitory;
         }
-
-        if matches_any(&[
+        if has(&[
             "house",
             "detached",
             "semidetached_house",
@@ -183,93 +316,171 @@ impl BuildingType {
         }
 
         // Industrial
-        if matches_any(&["factory", "industrial"]) {
+        if has(&["manufacturing", "manufacturing_plant"]) {
+            return Self::ManufacturingPlant;
+        }
+        if has(&["distribution", "distribution_center", "distribution_centre"]) {
+            return Self::DistributionCenter;
+        }
+        if has(&["logistics", "logistics_center", "logistics_centre"]) {
+            return Self::LogisticsCenter;
+        }
+        if has(&["depot"]) {
+            return Self::Depot;
+        }
+        if has(&["power_plant"]) {
+            return Self::PowerPlant;
+        }
+        if has(&["water_plant", "waterworks"]) {
+            return Self::WaterPlant;
+        }
+        if has(&["factory", "industrial"]) {
             return Self::Factory;
         }
-
-        if matches_any(&["warehouse"]) {
+        if has(&["warehouse"]) {
             return Self::Warehouse;
         }
-
-        if matches_any(&["workshop"]) {
+        if has(&["workshop"]) {
             return Self::Workshop;
         }
 
-        // Public
-        if matches_any(&["library"]) {
+        // Public / cultural
+        if has(&["library"]) {
             return Self::Library;
         }
-
-        if matches_any(&["museum"]) {
+        if has(&["museum"]) {
             return Self::Museum;
         }
-
-        if matches_any(&["community_centre", "community_center"]) {
+        if has(&["community_centre", "community_center"]) {
             return Self::CommunityCenter;
+        }
+        if has(&["townhall", "town_hall"]) {
+            return Self::TownHall;
+        }
+        if has(&["sports_centre", "sports_center"]) {
+            return Self::SportsCenter;
+        }
+        if has(&["stadium"]) {
+            return Self::Stadium;
+        }
+        if has(&["theatre", "theater"]) {
+            return Self::Theater;
+        }
+        if has(&["cinema"]) {
+            return Self::Cinema;
+        }
+        if has(&["convention_centre", "convention_center"]) {
+            return Self::ConventionCenter;
+        }
+        if has(&["cultural_centre", "cultural_center"]) {
+            return Self::CulturalCenter;
+        }
+        if has(&["public"]) {
+            return Self::PublicBuilding;
         }
 
         // Religious
-        if matches_any(&["church"]) {
+        if has(&["church"]) {
             return Self::Church;
         }
-
-        if matches_any(&["mosque"]) {
+        if has(&["mosque"]) {
             return Self::Mosque;
         }
-
-        if matches_any(&["temple"]) {
+        if has(&["temple"]) {
             return Self::Temple;
         }
-
-        if matches_any(&["shrine"]) {
+        if has(&["shrine"]) {
             return Self::Shrine;
         }
 
         // Transport
-        if matches_any(&["station", "railway_station"]) {
-            return Self::Station;
+        if has(&["airport_terminal"]) {
+            return Self::AirportTerminal;
         }
-
-        if matches_any(&["terminal"]) {
+        if has(&["airport"]) {
+            return Self::Airport;
+        }
+        if has(&["train_station"]) {
+            return Self::TrainStation;
+        }
+        if has(&["bus_station"]) {
+            return Self::BusStation;
+        }
+        if has(&["subway_station"]) {
+            return Self::SubwayStation;
+        }
+        if has(&["ferry_terminal"]) {
+            return Self::FerryTerminal;
+        }
+        if has(&["parking_structure"]) {
+            return Self::ParkingStructure;
+        }
+        if has(&["terminal"]) {
             return Self::Terminal;
         }
-
-        if matches_any(&["transport"]) {
+        if has(&["station", "railway_station"]) {
+            return Self::Station;
+        }
+        if has(&["transport"]) {
             return Self::TransportBuilding;
         }
 
         // Agricultural
-        if matches_any(&["barn"]) {
+        if has(&["agricultural_warehouse"]) {
+            return Self::AgriculturalWarehouse;
+        }
+        if has(&["livestock"]) {
+            return Self::LivestockBuilding;
+        }
+        if has(&["dairy"]) {
+            return Self::DairyBuilding;
+        }
+        if has(&["greenhouse_facility"]) {
+            return Self::GreenhouseFacility;
+        }
+        if has(&["barn"]) {
             return Self::Barn;
         }
-
-        if matches_any(&["stable"]) {
+        if has(&["stable"]) {
             return Self::Stable;
         }
-
-        if matches_any(&["farm"]) {
+        if has(&["farm"]) {
             return Self::FarmBuilding;
         }
 
         // Special
-        if matches_any(&["garage"]) {
+        if has(&["parking_garage"]) {
+            return Self::ParkingGarage;
+        }
+        if has(&["garage"]) {
             return Self::Garage;
         }
-
-        if matches_any(&["shed"]) {
+        if has(&["shed"]) {
             return Self::Shed;
         }
-
-        if matches_any(&["greenhouse"]) {
+        if has(&["greenhouse"]) {
             return Self::Greenhouse;
         }
-
-        if matches_any(&["tower"]) {
+        if has(&["skyscraper"]) {
+            return Self::Skyscraper;
+        }
+        if has(&["tower"]) {
             return Self::Tower;
         }
-
-        if matches_any(&["historic"]) {
+        if has(&["landmark"]) {
+            return Self::Landmark;
+        }
+        if has(&["historic"]) {
             return Self::Historic;
+        }
+        if has(&["castle"]) {
+            return Self::Castle;
+        }
+        if has(&["manor"]) {
+            return Self::Manor;
+        }
+        if has(&["villa"]) {
+            return Self::Villa;
         }
 
         Self::Unknown

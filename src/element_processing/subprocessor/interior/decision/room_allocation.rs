@@ -16,6 +16,9 @@ pub struct RoomAllocation {
     pub preferred_floor: Option<i32>,
     pub daylight_required: bool,
     pub priority: u8,
+    /// Whether this semantic room is preferred to receive the
+    /// already-existing primary real-world entrance.
+    pub entrance_preferred: bool,
 }
 
 /// Complete room decision for a building.
@@ -58,6 +61,16 @@ pub fn allocate_rooms(profile: &BuildingProfile, daylight: &FacadeDaylight) -> R
 
     let available_area = profile.area().max(1);
 
+    let entrance_preferred_room = profile.primary_entrance().and_then(|_| {
+        if profile.building_type.is_residential() {
+            Some(RoomType::LivingRoom)
+        } else if profile.building_type.is_commercial() {
+            Some(RoomType::ProductArea)
+        } else {
+            None
+        }
+    });
+
     let mut rooms = Vec::new();
     let mut used_area = 0i32;
 
@@ -88,8 +101,7 @@ pub fn allocate_rooms(profile: &BuildingProfile, daylight: &FacadeDaylight) -> R
          */
         let remaining_area = (available_area - used_area).max(0);
 
-        let max_by_remaining =
-            (remaining_area / requirement.min_area.max(1)) as usize;
+        let max_by_remaining = (remaining_area / requirement.min_area.max(1)) as usize;
 
         /*
          * If even the minimum semantic count cannot fit anymore,
@@ -100,9 +112,7 @@ pub fn allocate_rooms(profile: &BuildingProfile, daylight: &FacadeDaylight) -> R
             continue;
         }
 
-        let target_count = requirement
-            .max_count
-            .min(max_by_remaining);
+        let target_count = requirement.max_count.min(max_by_remaining);
 
         for index in 0..target_count {
             let remaining = available_area - used_area;
@@ -116,30 +126,24 @@ pub fn allocate_rooms(profile: &BuildingProfile, daylight: &FacadeDaylight) -> R
              * additional instances are optional and only consume
              * genuinely available area.
              */
-            if index >= requirement.min_count
-                && remaining < requirement.min_area
-            {
+            if index >= requirement.min_count && remaining < requirement.min_area {
                 break;
             }
 
-            let (min_width, min_depth) =
-                minimum_dimensions(requirement.min_area);
+            let (min_width, min_depth) = minimum_dimensions(requirement.min_area);
 
             let daylight_required =
-                daylight.total() > 0.0
-                    && naturally_lit_room(requirement.room_type);
+                daylight.total() > 0.0 && naturally_lit_room(requirement.room_type);
 
             rooms.push(RoomAllocation {
                 room_type: requirement.room_type,
                 required_area: requirement.min_area,
                 min_width,
                 min_depth,
-                preferred_floor: preferred_floor(
-                    profile,
-                    requirement.room_type,
-                ),
+                preferred_floor: preferred_floor(profile, requirement.room_type),
                 daylight_required,
                 priority: requirement.priority,
+                entrance_preferred: entrance_preferred_room == Some(requirement.room_type),
             });
 
             used_area += requirement.min_area;
@@ -210,6 +214,7 @@ fn fallback_unknown(profile: &BuildingProfile) -> RoomAllocationPlan {
         preferred_floor: Some(0),
         daylight_required: false,
         priority: 5,
+        entrance_preferred: false,
     });
 
     RoomAllocationPlan { rooms }

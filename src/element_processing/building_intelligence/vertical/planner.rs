@@ -3,6 +3,14 @@ use super::super::room_graph::{RoomConnectionKind, RoomGraph};
 use crate::element_processing::building_intelligence::types::BuildingContext;
 use crate::element_processing::subprocessor::interior::{FloorPlan, Rect};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAccessDirection {
+    North,
+    East,
+    South,
+    West,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VerticalAccessPlan {
     pub kind: VerticalAccessKind,
@@ -14,6 +22,8 @@ pub struct VerticalAccessPlan {
     pub x: i32,
     pub z: i32,
 
+    pub direction: VerticalAccessDirection,
+
     pub width: i32,
     pub length: i32,
 
@@ -22,6 +32,51 @@ pub struct VerticalAccessPlan {
 }
 
 impl VerticalAccessPlan {
+    /// Returns every X/Z cell occupied by this vertical-access footprint.
+    ///
+    /// This is purely geometric and does not modify FloorPlan or building
+    /// geometry.
+    pub fn footprint_cells(&self) -> Vec<(i32, i32)> {
+        let mut cells = Vec::new();
+
+        match self.direction {
+            VerticalAccessDirection::North => {
+                for distance in 0..self.length {
+                    let z = self.z - distance;
+                    for w in 0..self.width {
+                        cells.push((self.x + w, z));
+                    }
+                }
+            }
+            VerticalAccessDirection::East => {
+                for distance in 0..self.length {
+                    let x = self.x + distance;
+                    for w in 0..self.width {
+                        cells.push((x, self.z + w));
+                    }
+                }
+            }
+            VerticalAccessDirection::South => {
+                for distance in 0..self.length {
+                    let z = self.z + distance;
+                    for w in 0..self.width {
+                        cells.push((self.x + w, z));
+                    }
+                }
+            }
+            VerticalAccessDirection::West => {
+                for distance in 0..self.length {
+                    let x = self.x - distance;
+                    for w in 0..self.width {
+                        cells.push((x, self.z + w));
+                    }
+                }
+            }
+        }
+
+        cells
+    }
+
     pub fn is_valid(&self, context: &BuildingContext) -> bool {
         if self.from_floor >= self.to_floor {
             return false;
@@ -31,13 +86,38 @@ impl VerticalAccessPlan {
             return false;
         }
 
-        // Validate the complete physical footprint, not only its anchor.
-        let max_x = self.x + self.width - 1;
-        let max_z = self.z + self.length - 1;
+        // Validate the complete physical footprint, including
+        // directional stair progression.
+        let (min_x, max_x, min_z, max_z) = match self.direction {
+            VerticalAccessDirection::North => (
+                self.x,
+                self.x + self.width - 1,
+                self.z - self.length + 1,
+                self.z,
+            ),
+            VerticalAccessDirection::East => (
+                self.x,
+                self.x + self.length - 1,
+                self.z,
+                self.z + self.width - 1,
+            ),
+            VerticalAccessDirection::South => (
+                self.x,
+                self.x + self.width - 1,
+                self.z,
+                self.z + self.length - 1,
+            ),
+            VerticalAccessDirection::West => (
+                self.x - self.length + 1,
+                self.x,
+                self.z,
+                self.z + self.width - 1,
+            ),
+        };
 
-        self.x >= context.min_x
+        min_x >= context.min_x
             && max_x <= context.max_x
-            && self.z >= context.min_z
+            && min_z >= context.min_z
             && max_z <= context.max_z
             && self.lower_y < self.upper_y
     }
@@ -143,7 +223,27 @@ pub fn plan_vertical_access(
             continue;
         }
 
-        let length = match size {
+        /*
+         * Minecraft stairs rise one block per horizontal step.
+         *
+         * Therefore the physical horizontal run must be derived
+         * from the actual world-space floor height.
+         *
+         * A vertical difference of H blocks requires H + 1
+         * stair positions so that both the lower and upper levels
+         * are represented.
+         *
+         * StairSize is still retained as semantic intent, but it
+         * may no longer shorten the physical staircase below what
+         * the actual building height requires.
+         */
+        let height = upper_y - lower_y;
+
+        if height <= 0 {
+            continue;
+        }
+
+        let preferred_length = match size {
             StairSize::Compact => 2,
             StairSize::Small => 2,
             StairSize::Medium => 3,
@@ -151,14 +251,20 @@ pub fn plan_vertical_access(
             StairSize::Grand => 5,
         };
 
+        let length = preferred_length.max(2);
+
         /*
-         * Prefer a position that exists in both floor geometries.
+         * First determine the direction from the relationship between
+         * the two existing floor geometries.
          *
-         * The anchor solver will later account for the requested
-         * vertical-access footprint instead of selecting an arbitrary
-         * point from the overlap.
+         * The anchor solver then uses the same direction so the
+         * physical footprint matches the renderer and validation.
          */
-        let Some((x, z)) = overlapping_anchor(from_bounds, to_bounds, width.max(1), length) else {
+        let direction = choose_vertical_direction(from_bounds, to_bounds, width.max(1), length);
+
+        let Some((x, z)) =
+            overlapping_anchor(from_bounds, to_bounds, width.max(1), length, direction)
+        else {
             continue;
         };
 
@@ -169,6 +275,7 @@ pub fn plan_vertical_access(
             to_floor: to_room.floor,
             x,
             z,
+            direction,
             width: width.max(1),
             length,
             lower_y,
@@ -191,7 +298,99 @@ pub fn plan_vertical_access(
     plans
 }
 
-fn overlapping_anchor(a: Rect, b: Rect, width: i32, length: i32) -> Option<(i32, i32)> {
+fn choose_vertical_direction(a: Rect, b: Rect, width: i32, length: i32) -> VerticalAccessDirection {
+    let width = width.max(1);
+    let length = length.max(1);
+
+    let min_x = a.min_x.max(b.min_x);
+    let max_x = a.max_x.min(b.max_x);
+    let min_z = a.min_z.max(b.min_z);
+    let max_z = a.max_z.min(b.max_z);
+
+    if min_x > max_x || min_z > max_z {
+        return VerticalAccessDirection::South;
+    }
+
+    let overlap_width = max_x - min_x + 1;
+    let overlap_depth = max_z - min_z + 1;
+
+    let north_south_fits = overlap_width >= width && overlap_depth >= length;
+
+    let east_west_fits = overlap_width >= length && overlap_depth >= width;
+
+    match (north_south_fits, east_west_fits) {
+        (true, false) => {
+            if b.min_z >= a.min_z {
+                VerticalAccessDirection::South
+            } else {
+                VerticalAccessDirection::North
+            }
+        }
+
+        (false, true) => {
+            if b.min_x >= a.min_x {
+                VerticalAccessDirection::East
+            } else {
+                VerticalAccessDirection::West
+            }
+        }
+
+        (true, true) => {
+            /*
+             * Prefer the orientation with the larger shared span.
+             * This keeps the staircase inside the actual overlapping
+             * room geometry instead of relying on arbitrary center offsets.
+             */
+            if overlap_depth >= overlap_width {
+                if b.center().1 >= a.center().1 {
+                    VerticalAccessDirection::South
+                } else {
+                    VerticalAccessDirection::North
+                }
+            } else if b.center().0 >= a.center().0 {
+                VerticalAccessDirection::East
+            } else {
+                VerticalAccessDirection::West
+            }
+        }
+
+        (false, false) => {
+            /*
+             * Neither orientation can fit the requested footprint.
+             * Return the most natural direction; overlapping_anchor()
+             * will reject it safely.
+             */
+            let (ax, az) = a.center();
+            let (bx, bz) = b.center();
+
+            let dx = (bx - ax).abs();
+            let dz = (bz - az).abs();
+
+            if dz >= dx {
+                if bz >= az {
+                    VerticalAccessDirection::South
+                } else {
+                    VerticalAccessDirection::North
+                }
+            } else if bx >= ax {
+                VerticalAccessDirection::East
+            } else {
+                VerticalAccessDirection::West
+            }
+        }
+    }
+}
+
+fn overlapping_anchor(
+    a: Rect,
+    b: Rect,
+    width: i32,
+    length: i32,
+    direction: VerticalAccessDirection,
+) -> Option<(i32, i32)> {
+    let width = width.max(1);
+    let length = length.max(1);
+
     let min_x = a.min_x.max(b.min_x);
     let max_x = a.max_x.min(b.max_x);
     let min_z = a.min_z.max(b.min_z);
@@ -201,21 +400,35 @@ fn overlapping_anchor(a: Rect, b: Rect, width: i32, length: i32) -> Option<(i32,
         return None;
     }
 
-    let width = width.max(1);
-    let length = length.max(1);
+    let (footprint_x, footprint_z) = match direction {
+        VerticalAccessDirection::North | VerticalAccessDirection::South => (width, length),
+
+        VerticalAccessDirection::East | VerticalAccessDirection::West => (length, width),
+    };
 
     let overlap_width = max_x - min_x + 1;
     let overlap_length = max_z - min_z + 1;
 
-    if overlap_width < width || overlap_length < length {
+    // The complete staircase footprint must fit inside
+    // the shared physical area of the two rooms.
+    if overlap_width < footprint_x || overlap_length < footprint_z {
         return None;
     }
 
-    let safe_max_x = max_x - width + 1;
-    let safe_max_z = max_z - length + 1;
+    let safe_max_x = max_x - footprint_x + 1;
+    let safe_max_z = max_z - footprint_z + 1;
 
-    let x = min_x + (safe_max_x - min_x) / 2;
-    let z = min_z + (safe_max_z - min_z) / 2;
+    // Center the complete stair footprint in the valid overlap.
+    let anchor_x = min_x + (safe_max_x - min_x) / 2;
+    let anchor_z = min_z + (safe_max_z - min_z) / 2;
 
-    Some((x, z))
+    match direction {
+        VerticalAccessDirection::North => Some((anchor_x, anchor_z + footprint_z - 1)),
+
+        VerticalAccessDirection::South => Some((anchor_x, anchor_z)),
+
+        VerticalAccessDirection::East => Some((anchor_x, anchor_z)),
+
+        VerticalAccessDirection::West => Some((anchor_x + footprint_x - 1, anchor_z)),
+    }
 }

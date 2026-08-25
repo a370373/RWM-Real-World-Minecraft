@@ -61,43 +61,71 @@ pub fn detect_mapped_entrance(
 
     nodes
         .iter()
-        .filter(|node| node.tags.contains_key("entrance") || node.tags.contains_key("door"))
+        .filter(|node| {
+            node.tags.contains_key("entrance")
+                || node.tags.contains_key("door")
+        })
         .map(|node| {
-            let dx = node.x - center_x;
-            let dz = node.z - center_z;
+            let north = (node.z - min_z).abs();
+            let south = (node.z - max_z).abs();
+            let west = (node.x - min_x).abs();
+            let east = (node.x - max_x).abs();
 
-            let (side, distance) = if node.z == min_z {
-                (EntranceSide::North, dz.abs())
-            } else if node.z == max_z {
-                (EntranceSide::South, dz.abs())
-            } else if node.x == min_x {
-                (EntranceSide::West, dx.abs())
-            } else if node.x == max_x {
-                (EntranceSide::East, dx.abs())
-            } else {
-                let north = (node.z - min_z).abs();
-                let south = (node.z - max_z).abs();
-                let west = (node.x - min_x).abs();
-                let east = (node.x - max_x).abs();
-
+            let (side, wall_distance, center_distance) = {
                 let distances = [
-                    (EntranceSide::North, north),
-                    (EntranceSide::South, south),
-                    (EntranceSide::West, west),
-                    (EntranceSide::East, east),
+                    (EntranceSide::North, north, (node.x - center_x).abs()),
+                    (EntranceSide::South, south, (node.x - center_x).abs()),
+                    (EntranceSide::West, west, (node.z - center_z).abs()),
+                    (EntranceSide::East, east, (node.z - center_z).abs()),
                 ];
 
-                distances.into_iter().min_by_key(|(_, d)| *d).unwrap()
+                distances
+                    .into_iter()
+                    .min_by_key(|(_, wall_distance, _)| *wall_distance)
+                    .unwrap()
             };
 
             let mut candidate = EntranceCandidate::new(side, node.x, node.z);
 
-            candidate.has_entrance_poi = node.tags.contains_key("entrance");
-            candidate.calculate_score();
+            let has_entrance = node.tags.contains_key("entrance");
+            let has_door = node.tags.contains_key("door");
 
-            (candidate, distance)
+            candidate.has_entrance_poi = has_entrance;
+
+            // Explicit mapped entrance is the strongest mapped evidence.
+            if has_entrance {
+                candidate.score += 100.0;
+            } else if has_door {
+                // A mapped door is still strong evidence, but weaker
+                // than an explicit entrance= node.
+                candidate.score += 50.0;
+            }
+
+            // Prefer nodes that are actually on the reconstructed
+            // exterior wall. Interior nodes tagged as doors/entrances
+            // must not outrank a real exterior entrance.
+            if wall_distance == 0 {
+                candidate.score += 25.0;
+            } else {
+                // Keep the candidate available as mapped evidence,
+                // but penalize nodes that are not exactly on the wall.
+                candidate.score -= (wall_distance.min(10) as f32) * 5.0;
+            }
+
+            // Small deterministic tie-break preference toward the
+            // geometric center of the corresponding exterior wall.
+            // This is ONLY a tie-breaker; it never outranks stronger
+            // entrance/door evidence.
+            candidate.score -= (center_distance as f32) * 0.01;
+
+            (candidate, wall_distance)
         })
-        .min_by_key(|(_, distance)| *distance)
+        .filter(|(_, wall_distance)| *wall_distance == 0)
+        .max_by(|(a, _), (b, _)| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(candidate, _)| candidate)
 }
 

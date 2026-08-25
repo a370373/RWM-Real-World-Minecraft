@@ -16,6 +16,7 @@ pub fn build_floor_plan(
     mut context: BuildingContext,
     snapshot: &BuildingSnapshot,
     mapped_nodes: &[crate::osm_parser::ProcessedNode],
+    start_y_offset: i32,
 ) -> PlannedBuilding {
     // ---------------------------------------------------------
     // REAL-WORLD CONTEXT -> BUILDING INTELLIGENCE
@@ -120,7 +121,71 @@ pub fn build_floor_plan(
     // The door is READ-ONLY reconstruction input.
     // Interior Intelligence does not create, move, remove,
     // or modify the exterior door.
-    let snapshot_door = snapshot.doors.first().map(|door| {
+    // ---------------------------------------------------------
+    // MAPPED REAL-WORLD DOOR -> MAIN ENTRANCE CANDIDATE
+    // ---------------------------------------------------------
+    //
+    // ExistingDoor is authoritative read-only reconstruction input.
+    //
+    // IMPORTANT:
+    // - Never invent or move the mapped door coordinate.
+    // - Never modify the building footprint.
+    // - Never use cached_floor_area here.
+    // - Main entrance rendering later opens the EXISTING exterior wall.
+    //
+    // When multiple mapped doors exist, rank them using the available
+    // exterior context instead of blindly taking Vec::first().
+    //
+    // Priority:
+    //   1. mapped real-world door
+    //   2. path / footway proximity
+    //   3. road proximity
+    //   4. parking proximity
+    //   5. geometric centrality as deterministic tie-breaker
+    //
+    let snapshot_door = snapshot.doors.iter().max_by(|a, b| {
+        let center_x = (context.min_x + context.max_x) / 2;
+        let center_z = (context.min_z + context.max_z) / 2;
+
+        let score = |door: &crate::element_processing::building_intelligence::input::ExistingDoor| {
+            let mut score = 0.0_f32;
+
+            // A mapped door is already real-world evidence.
+            score += 1000.0;
+
+            // Prefer doors on the side with the strongest path evidence.
+            let path_distance = snapshot.nearby_path_distance.unwrap_or(i32::MAX);
+            if path_distance != i32::MAX {
+                score += (100.0 - path_distance.min(100) as f32).max(0.0);
+            }
+
+            // Prefer buildings with a nearby reconstructed road.
+            let road_distance = snapshot.nearby_road_distance.unwrap_or(i32::MAX);
+            if road_distance != i32::MAX {
+                score += (60.0 - road_distance.min(60) as f32).max(0.0);
+            }
+
+            // Parking is weaker evidence than pedestrian/road access.
+            let parking_distance = snapshot.nearby_parking_distance.unwrap_or(i32::MAX);
+            if parking_distance != i32::MAX {
+                score += (30.0 - parking_distance.min(30) as f32).max(0.0);
+            }
+
+            // Deterministic geometric tie-breaker:
+            // prefer a mapped door closer to the building center.
+            let dx = (door.x - center_x).abs() as f32;
+            let dz = (door.z - center_z).abs() as f32;
+            let distance = dx + dz;
+            score += (20.0 - distance.min(20.0)).max(0.0);
+
+            score
+        };
+
+        score(a)
+            .partial_cmp(&score(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .map(|door| {
         EntranceCandidate::new(
             match door.side {
                 crate::element_processing::building_intelligence::input::WindowSide::North => {
@@ -196,8 +261,7 @@ pub fn build_floor_plan(
                     let size_factor = (area / 6.0).clamp(0.25, 2.0);
 
                     // Higher floors generally receive slightly better daylight.
-                    let floor_factor =
-                        (1.0 + window.floor.max(0) as f32 * 0.04).clamp(1.0, 1.20);
+                    let floor_factor = (1.0 + window.floor.max(0) as f32 * 0.04).clamp(1.0, 1.20);
 
                     // Existing windows are already real-world mapped input.
                     (size_factor * floor_factor).clamp(0.1, 2.0)
@@ -314,16 +378,40 @@ pub fn build_floor_plan(
     // No exterior geometry / BBox / real-world reconstruction
     // is modified here.
 
-    if let Some(plan) =
-        crate::element_processing::subprocessor::interior::floor_plan::
-            generate_floor_plan_with_constraints(
-                bounds,
-                &decision.rooms.rooms,
-                &spatial_constraints,
-                0,
-            )
-    {
-        floor_plans.push(plan);
+    // Generate one authoritative FloorPlan for every semantic
+    // building floor.  The previous implementation only generated
+    // floor 0, which made all higher floors disappear from the
+    // physical interior renderer.
+    let floor_count = context.floors.max(1);
+
+    for floor in 0..floor_count {
+        let floor_i32 = floor as i32;
+
+        if let Some(plan) =
+            crate::element_processing::subprocessor::interior::floor_plan::
+                generate_floor_plan_with_constraints(
+                    bounds,
+                    &decision.rooms.rooms,
+                    &spatial_constraints,
+                    floor_i32,
+                )
+        {
+            println!(
+                "[BI FLOOR] generated floor={} rooms={}",
+                floor,
+                plan.rooms.len()
+            );
+            floor_plans.push(plan);
+        } else {
+            println!(
+                "[BI FLOOR] FAILED floor={} bounds=({},{})-({},{})",
+                floor,
+                bounds.min_x,
+                bounds.min_z,
+                bounds.max_x,
+                bounds.max_z
+            );
+        }
     }
 
     // ---------------------------------------------------------
@@ -342,18 +430,6 @@ pub fn build_floor_plan(
     // read-only spatial intelligence.
 
     // ---------------------------------------------------------
-    // FURNITURE INTENT
-    // ---------------------------------------------------------
-
-    let furniture_planner = FurniturePlanner::new();
-
-    let mut furniture = Vec::new();
-
-    for (floor, plan) in floor_plans.iter().enumerate() {
-        furniture.extend(furniture_planner.plan_floor(plan, &spatial_constraints, floor as i32));
-    }
-
-    // ---------------------------------------------------------
     // ROOM GRAPH / TOPOLOGY
     // ---------------------------------------------------------
 
@@ -370,6 +446,24 @@ pub fn build_floor_plan(
         decision.main_door.as_ref(),
         &room_door_widths,
     );
+
+    // ---------------------------------------------------------
+    // FURNITURE INTENT
+    // ---------------------------------------------------------
+
+    let furniture_planner = FurniturePlanner::new();
+
+    let mut furniture = Vec::new();
+
+    for (floor, plan) in floor_plans.iter().enumerate() {
+        furniture.extend(furniture_planner.plan_floor(
+            plan,
+            &spatial_constraints,
+            &room_graph,
+            floor as i32,
+        ));
+    }
+
     // ---------------------------------------------------------
     // VERTICAL ACCESS PLANNING
     // ---------------------------------------------------------
@@ -380,7 +474,7 @@ pub fn build_floor_plan(
     // Read-only intelligence: never modifies room geometry,
     // exterior geometry, footprint, geographic coordinates or BBox.
     let floor_levels = (0..context.floors)
-        .map(|floor| floor as i32 * 4)
+        .map(|floor| start_y_offset + 1 + floor as i32 * 4)
         .collect::<Vec<_>>();
 
     let vertical_access =
@@ -434,11 +528,26 @@ pub fn build_floor_plan(
     // geographic coordinates or BBox are modified.
     circulation.attach_vertical_access(&vertical_access);
 
+    println!(
+        "[BI DEBUG] floor_plans={} rooms={} graph_rooms={} graph_connections={} vertical_access={}",
+        floor_plans.len(),
+        floor_plans.iter().map(|p| p.rooms.len()).sum::<usize>(),
+        room_graph.rooms.len(),
+        room_graph.connections.len(),
+        vertical_access.len(),
+    );
+
     let mut doorway_plan =
         crate::element_processing::building_intelligence::circulation::build_doorway_plan(
             &room_graph,
             &floor_plans,
         );
+
+    println!(
+        "[BI DEBUG] doorway_plan.doors={} main_entrance={}",
+        doorway_plan.doors.len(),
+        doorway_plan.main_entrance.is_some(),
+    );
 
     doorway_plan.main_entrance = decision.main_door;
 

@@ -37,15 +37,7 @@ fn room_bounds(
     floor_plans
         .get(node.floor)?
         .rooms
-        .iter()
-        .filter(|room| room.room_type == node.room_type)
-        .nth(
-            graph
-                .rooms
-                .iter()
-                .filter(|other| other.floor == node.floor && other.room_type == node.room_type)
-                .position(|other| other.id == room_id)?,
-        )
+        .get(node.floor_room_index)
         .map(|room| room.bounds)
 }
 
@@ -149,8 +141,41 @@ pub fn build_doorway_plan(
 ) -> DoorwayPlan {
     let mut plan = DoorwayPlan::default();
 
+    // ---------------------------------------------------------
+    // SINGLE SOURCE OF TRUTH
+    // ---------------------------------------------------------
+    //
+    // RoomGraph.connections already represents the semantic
+    // room-to-room topology.
+    //
+    // DoorwayPlan ONLY materializes connections that:
+    //   1. are on the same floor
+    //   2. are actual room-to-room connections
+    //   3. have a real shared wall
+    //
+    // VerticalAccess is handled by the staircase system and MUST
+    // NEVER become an ordinary door.
+    //
+    // No door is invented from RoomType alone.
+    // No door is created merely because a room exists.
+    // ---------------------------------------------------------
+
     for connection in &graph.connections {
+        // Vertical circulation is NOT an ordinary doorway.
         if connection.kind == RoomConnectionKind::VerticalAccess {
+            continue;
+        }
+
+        let Some(from_room) = graph.room(connection.from) else {
+            continue;
+        };
+
+        let Some(to_room) = graph.room(connection.to) else {
+            continue;
+        };
+
+        // Interior doors only connect rooms on the same floor.
+        if from_room.floor != to_room.floor {
             continue;
         }
 
@@ -162,10 +187,23 @@ pub fn build_doorway_plan(
             continue;
         };
 
+        // A door MUST exist on a genuine shared wall.
         let Some((x, z, width, orientation)) = shared_wall_door(a, b, connection.preferred_width)
         else {
             continue;
         };
+
+        // Prevent duplicate semantic connections from producing
+        // duplicate physical doors.
+        let duplicate = plan.doors.iter().any(|existing| {
+            existing.kind == connection.kind
+                && ((existing.from_room == connection.from && existing.to_room == connection.to)
+                    || (existing.from_room == connection.to && existing.to_room == connection.from))
+        });
+
+        if duplicate {
+            continue;
+        }
 
         plan.doors.push(InteriorDoor {
             from_room: connection.from,

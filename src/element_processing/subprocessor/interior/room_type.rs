@@ -13,6 +13,14 @@ pub enum RoomType {
     Laundry,
     Storage,
     UtilityRoom,
+    Pantry,
+    WalkInCloset,
+    DressingRoom,
+    StudyRoom,
+    GuestRoom,
+    Nursery,
+    MasterBedroom,
+    EnsuiteBathroom,
 
     // Restaurant / Food
     DiningArea,
@@ -20,11 +28,20 @@ pub enum RoomType {
     Counter,
     StaffRoom,
     ServiceArea,
+    BarArea,
+    KitchenPrep,
+    StorageKitchen,
+    DiningRoomPrivate,
 
     // Commercial
     ProductArea,
     DisplayArea,
     Checkout,
+    SalesFloor,
+    StockRoom,
+    CashOffice,
+    SecurityRoom,
+    CustomerService,
 
     // Office
     Office,
@@ -32,12 +49,24 @@ pub enum RoomType {
     MeetingRoom,
     BreakRoom,
     ServerRoom,
+    ArchiveRoom,
+    OpenOffice,
+    PrivateOffice,
+    ExecutiveOffice,
+    CopyRoom,
+    ReceptionArea,
 
     // Education
     Classroom,
     Laboratory,
     Library,
     ReadingArea,
+    LectureHall,
+    ComputerLab,
+    ScienceLab,
+    StaffRoomEducation,
+    TeachersRoom,
+    AdministrationOffice,
 
     // Healthcare
     Ward,
@@ -46,6 +75,14 @@ pub enum RoomType {
     NursingStation,
     WaitingArea,
     Pharmacy,
+    OperatingRoom,
+    IntensiveCareUnit,
+    EmergencyRoom,
+    ConsultationRoom,
+    IsolationRoom,
+    SterilizationRoom,
+    Morgue,
+    StaffLounge,
 
     // Generic
     Corridor,
@@ -54,12 +91,31 @@ pub enum RoomType {
     ProductionArea,
     LoadingArea,
     Workshop,
+    AssemblyArea,
+    MachineryRoom,
+    MaintenanceRoom,
+    StorageWarehouse,
+    EquipmentRoom,
+    ControlRoom,
 
     // Public / Special
     ExhibitionArea,
     CommunityRoom,
     PrayerRoom,
     PlatformArea,
+    Stage,
+    Auditorium,
+    Gallery,
+    TicketHall,
+    LockerRoom,
+    Gym,
+    PoolArea,
+    ChangingRoom,
+    SecurityOffice,
+    ControlCenter,
+    MechanicalRoom,
+    ElectricalRoom,
+    BoilerRoom,
 }
 
 impl RoomType {

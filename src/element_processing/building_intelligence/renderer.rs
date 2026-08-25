@@ -48,10 +48,9 @@ struct WorldEditorVerticalAdapter<'a, 'b> {
 }
 
 impl<'a, 'b> VerticalAccessEditor for WorldEditorVerticalAdapter<'a, 'b> {
-    type Block = Block;
-
-    fn place_block(&mut self, block: Self::Block, x: i32, y: i32, z: i32) {
-        self.editor.set_block(block, x, y, z, None, None);
+    fn place_block(&mut self, block: BlockWithProperties, x: i32, y: i32, z: i32) {
+        self.editor
+            .set_block_with_properties_absolute(block, x, y, z, None, None);
     }
 }
 
@@ -172,6 +171,17 @@ pub fn generate_intelligent_building_interior(
     // ---------------------------------------------------------
     // Safety boundary
     // ---------------------------------------------------------
+    println!(
+        "[BI RENDER DEBUG] context=({}, {})-({}, {}), renderer=({}, {})-({}, {})",
+        planned_building.context.min_x,
+        planned_building.context.min_z,
+        planned_building.context.max_x,
+        planned_building.context.max_z,
+        min_x,
+        min_z,
+        max_x,
+        max_z,
+    );
     //
     // Building Intelligence must describe exactly the same
     // real-world building footprint that the existing generation
@@ -206,7 +216,9 @@ pub fn generate_intelligent_building_interior(
     // Plan validation
     // ---------------------------------------------------------
 
-    if planned_building.floor_plans.is_empty() || planned_building.room_graph.rooms.is_empty() {
+    if planned_building.floor_plans.is_empty() {
+        println!("[BI RENDER] NO FLOOR PLANS -> legacy interior fallback");
+
         generate_building_interior(
             editor,
             cached_floor_area,
@@ -223,47 +235,52 @@ pub fn generate_intelligent_building_interior(
             &effective_passages,
             has_sloped_roof,
         );
-
         return;
     }
 
+    if planned_building.room_graph.rooms.is_empty() {
+        println!("[BI RENDER] FLOOR PLANS EXIST BUT ROOM GRAPH EMPTY -> rendering rooms anyway");
+    }
     // ---------------------------------------------------------
     // Semantic graph validation
     // ---------------------------------------------------------
+    //
+    // Room geometry comes from FloorPlan and must not depend on
+    // RoomGraph being populated. RoomGraph only controls topology.
+    //
+    if !planned_building.room_graph.rooms.is_empty() {
+        let graph_valid = planned_building
+            .room_graph
+            .connections
+            .iter()
+            .all(|connection| {
+                connection.from < planned_building.room_graph.rooms.len()
+                    && connection.to < planned_building.room_graph.rooms.len()
+            });
 
-    let graph_valid = planned_building
-        .room_graph
-        .connections
-        .iter()
-        .all(|connection| {
-            connection.from < planned_building.room_graph.rooms.len()
-                && connection.to < planned_building.room_graph.rooms.len()
-        });
-
-    if !graph_valid {
-        generate_building_interior(
-            editor,
-            cached_floor_area,
-            min_x,
-            min_z,
-            max_x,
-            max_z,
-            start_y_offset,
-            effective_building_height,
-            wall_block,
-            floor_levels,
-            abs_terrain_offset,
-            is_abandoned_building,
-            &effective_passages,
-            has_sloped_roof,
+        if !graph_valid {
+            println!(
+                "[BI RENDER] INVALID ROOM GRAPH -> topology disabled,                  continuing with FloorPlan room rendering"
+            );
+        }
+    } else {
+        println!(
+            "[BI RENDER] NO ROOM GRAPH -> topology disabled,              continuing with FloorPlan room rendering"
         );
-
-        return;
     }
 
     // ---------------------------------------------------------
     // Intelligent physical rendering
     // ---------------------------------------------------------
+    println!(
+        "[BI RENDER DEBUG] ENTERING ROOM RENDER: floors={} rooms={}",
+        planned_building.floor_plans.len(),
+        planned_building
+            .floor_plans
+            .iter()
+            .map(|p| p.rooms.len())
+            .sum::<usize>(),
+    );
     //
     // Building Intelligence is now the semantic source of truth
     // for the interior layout.
@@ -274,189 +291,274 @@ pub fn generate_intelligent_building_interior(
     // Legacy generation remains available through the validation
     // fallbacks above.
 
+    // ---------------------------------------------------------
+    // FLOOR PLAN -> PHYSICAL ROOM MATERIALIZATION
+    // ---------------------------------------------------------
+    //
+    // FloorPlan owns room geometry.
+    // RoomGraph owns topology only.
+    //
+    // Every planned room is physically materialized here.
+    //
+
+    println!(
+        "[BI ROOM] MATERIALIZATION START floors={} rooms={}",
+        planned_building.floor_plans.len(),
+        planned_building
+            .floor_plans
+            .iter()
+            .map(|p| p.rooms.len())
+            .sum::<usize>()
+    );
+
+    // ---------------------------------------------------------
+    // Strict real-building interior boundary
+    // ---------------------------------------------------------
+    //
+    // Room geometry is semantic planning data.
+    //
+    // The cached floor area is the authoritative physical
+    // interior boundary of the already reconstructed building.
+    //
+    // IMPORTANT:
+    // - Room bounds NEVER expand the building.
+    // - BBox is NOT used as the room interior boundary.
+    // - No room block may be materialized outside cached_floor_area.
+    // - Existing exterior geometry remains authoritative.
+    //
+    // Build a fast membership set once instead of repeatedly
+    // scanning the cached floor-area vector.
+    let cached_floor_area_set: std::collections::HashSet<(i32, i32)> =
+        cached_floor_area.iter().copied().collect();
+
+    println!(
+        "[BI ROOM] STRICT INTERIOR AREA cells={}",
+        cached_floor_area_set.len()
+    );
+
     for (floor_index, floor_plan) in planned_building.floor_plans.iter().enumerate() {
         let floor_y = floor_levels
             .get(floor_index)
             .copied()
             .unwrap_or(start_y_offset + (floor_index as i32 * 4));
 
-        for room in &floor_plan.rooms {
+        for (room_index, room) in floor_plan.rooms.iter().enumerate() {
+            // -------------------------------------------------
+            // Room bounds are planning geometry only.
+            //
+            // First intersect them with the building renderer
+            // bounds, then every individual cell is additionally
+            // validated against the authoritative cached floor
+            // area below.
+            // -------------------------------------------------
             let room_min_x = room.bounds.min_x.max(min_x);
             let room_max_x = room.bounds.max_x.min(max_x);
             let room_min_z = room.bounds.min_z.max(min_z);
             let room_max_z = room.bounds.max_z.min(max_z);
 
             if room_min_x > room_max_x || room_min_z > room_max_z {
+                println!(
+                    "[BI ROOM] SKIP floor={} room={} invalid_bounds",
+                    floor_index, room_index
+                );
                 continue;
             }
 
-            // Floor
-            for z in room_min_z..=room_max_z {
-                for x in room_min_x..=room_max_x {
-                    editor.set_block(wall_block, floor_y, z, x, None, None);
-                }
-            }
+            // -------------------------------------------------
+            // Calculate the actual physical cells belonging to
+            // BOTH:
+            //
+            //   1. semantic room bounds
+            //   2. real reconstructed building floor area
+            //
+            // This is the only area in which this room may exist.
+            // -------------------------------------------------
+            let mut interior_cells = Vec::new();
 
-            // Walls
             for z in room_min_z..=room_max_z {
                 for x in room_min_x..=room_max_x {
-                    if x == room_min_x || x == room_max_x || z == room_min_z || z == room_max_z {
-                        for y in 1..=3 {
-                            editor.set_block(wall_block, floor_y + y, z, x, None, None);
-                        }
+                    if cached_floor_area_set.contains(&(x, z)) {
+                        interior_cells.push((x, z));
                     }
                 }
             }
 
-            // Ceiling
-            for z in room_min_z..=room_max_z {
-                for x in room_min_x..=room_max_x {
-                    editor.set_block(wall_block, floor_y + 4, z, x, None, None);
+            if interior_cells.is_empty() {
+                println!(
+                    "[BI ROOM] SKIP floor={} room={} outside_real_building",
+                    floor_index, room_index
+                );
+                continue;
+            }
+
+            println!(
+                "[BI ROOM] MATERIALIZE floor={} room={} type={:?} \
+bounds=({},{})-({},{}) valid_cells={} y={}",
+                floor_index,
+                room_index,
+                room.room_type,
+                room_min_x,
+                room_min_z,
+                room_max_x,
+                room_max_z,
+                interior_cells.len(),
+                floor_y
+            );
+            // -------------------------------------------------
+            // Room floor
+            // -------------------------------------------------
+            //
+            // HARD PHYSICAL RULE:
+            //
+            // RoomPlan is semantic planning data.
+            // cached_floor_area is the authoritative physical
+            // interior footprint.
+            //
+            // A room may NEVER create floor blocks outside
+            // the already reconstructed building interior.
+            //
+            // -------------------------------------------------
+            for &(x, z) in &interior_cells {
+                if !cached_floor_area_set.contains(&(x, z)) {
+                    continue;
+                }
+
+                editor.set_block_absolute(wall_block, x, floor_y, z, None, None);
+            } // -------------------------------------------------
+              // Room walls
+              // -------------------------------------------------
+              //
+              // A wall is generated only when:
+              //
+              //   - the cell belongs to the real building floor area
+              //   - the cell lies on the semantic room boundary
+              //
+              // This prevents a room rectangle from becoming an
+              // exterior structure outside the actual building.
+              // -------------------------------------------------
+            let room_cell_set: std::collections::HashSet<(i32, i32)> =
+                interior_cells.iter().copied().collect();
+
+            for &(x, z) in &interior_cells {
+                // -------------------------------------------------
+                // Topology-based room boundary
+                // -------------------------------------------------
+                //
+                // RoomPlan bounds are only semantic planning data.
+                // They must NOT be treated as the physical wall boundary.
+                //
+                // A wall exists only when this room cell has a horizontal
+                // neighbour which:
+                //
+                //   1. belongs to the authoritative real building floor area
+                //   2. does NOT belong to this room
+                //
+                // This makes room walls follow the actual room topology
+                // instead of blindly following the rectangular room bounds.
+                //
+                // If a neighbour is outside cached_floor_area, we do NOT
+                // create an interior wall there. The exterior building
+                // geometry remains owned by the existing building renderer.
+                // -------------------------------------------------
+
+                let neighbours = [(x - 1, z), (x + 1, z), (x, z - 1), (x, z + 1)];
+
+                let boundary = neighbours.iter().any(|&(nx, nz)| {
+                    cached_floor_area_set.contains(&(nx, nz)) && !room_cell_set.contains(&(nx, nz))
+                });
+
+                if !boundary {
+                    continue;
+                }
+
+                for y in 1..=3 {
+                    editor.set_block_absolute(wall_block, x, floor_y + y, z, None, None);
                 }
             }
+            // -------------------------------------------------
+            // Room ceiling
+            // -------------------------------------------------
+            //
+            // HARD PHYSICAL RULE:
+            //
+            // A semantic room MUST NOT create an intermediate
+            // floor/ceiling simply because another room exists
+            // above or below it in RoomPlan.
+            //
+            // The physical floor structure is controlled by
+            // floor_levels, not by individual room rectangles.
+            //
+            // Therefore only the TOP physical floor receives
+            // the building ceiling here.
+            //
+            // This prevents:
+            //
+            //     Room A
+            //     ========  <- accidental intermediate ceiling
+            //     Room B
+            //
+            // from appearing inside a real tall building.
+            //
+            // -------------------------------------------------
+            let is_top_floor = floor_index + 1 >= floor_levels.len();
+
+            if is_top_floor {
+                for &(x, z) in &interior_cells {
+                    if !cached_floor_area_set.contains(&(x, z)) {
+                        continue;
+                    }
+
+                    editor.set_block_absolute(wall_block, x, floor_y + 4, z, None, None);
+                }
+            }
+
+            // -------------------------------------------------
+            // Interior clearance
+            // -------------------------------------------------
+            //
+            // The room volume itself must remain AIR.
+            //
+            // We do NOT fill:
+            //   floor_y + 1
+            //   floor_y + 2
+            //   floor_y + 3
+            //
+            // with wall blocks.
+            //
+            // Existing furniture / geometry is intentionally
+            // preserved here. The circulation renderer later
+            // handles walkable clearance for approved paths.
+            // -------------------------------------------------
         }
     }
 
-    // ---------------------------------------------------------
-    // Interior doorway rendering
-    // ---------------------------------------------------------
-    //
-    // DoorwayPlan is the semantic source of truth for interior
-    // connections. This stage only removes wall blocks to create
-    // physical openings between already-generated rooms.
-    //
-    // IMPORTANT:
-    // - Does not modify room geometry.
-    // - Does not expand the building footprint.
-    // - Does not modify BBox.
-    //
-    for door in &planned_building.doorway_plan.doors {
-        let Some(from_room) = planned_building.room_graph.rooms.get(door.from_room) else {
-            continue;
-        };
-
-        let Some(to_room) = planned_building.room_graph.rooms.get(door.to_room) else {
-            continue;
-        };
-
-        if door.kind == RoomConnectionKind::VerticalAccess {
-            continue;
-        }
-
-        let Some(from_plan) = planned_building.floor_plans.get(from_room.floor) else {
-            continue;
-        };
-
-        let Some(to_plan) = planned_building.floor_plans.get(to_room.floor) else {
-            continue;
-        };
-
-        let from_index = planned_building
-            .room_graph
-            .rooms
-            .iter()
-            .filter(|other| {
-                other.floor == from_room.floor && other.room_type == from_room.room_type
-            })
-            .position(|other| other.id == door.from_room);
-
-        let to_index = planned_building
-            .room_graph
-            .rooms
-            .iter()
-            .filter(|other| other.floor == to_room.floor && other.room_type == to_room.room_type)
-            .position(|other| other.id == door.to_room);
-
-        let (Some(from_index), Some(to_index)) = (from_index, to_index) else {
-            continue;
-        };
-
-        let Some(a) = from_plan
-            .rooms
-            .iter()
-            .filter(|room| room.room_type == from_room.room_type)
-            .nth(from_index)
-            .map(|room| room.bounds)
-        else {
-            continue;
-        };
-
-        let Some(b) = to_plan
-            .rooms
-            .iter()
-            .filter(|room| room.room_type == to_room.room_type)
-            .nth(to_index)
-            .map(|room| room.bounds)
-        else {
-            continue;
-        };
-
-        let width = door.width.max(1);
-        let half = width / 2;
-
-        let floor_y = floor_levels
-            .get(from_room.floor)
-            .copied()
-            .unwrap_or(start_y_offset + (from_room.floor as i32 * 4));
-
-        // East / west shared wall.
-        if a.max_x + 1 == b.min_x || b.max_x + 1 == a.min_x {
-            let wall_x = if a.max_x + 1 == b.min_x {
-                a.max_x
-            } else {
-                a.min_x
-            };
-
-            for z in (door.z - half)..=(door.z + half) {
-                if z < min_z || z > max_z {
-                    continue;
-                }
-
-                if z < a.min_z.min(b.min_z) || z > a.max_z.max(b.max_z) {
-                    continue;
-                }
-
-                for y in (floor_y + 1)..=(floor_y + 3) {
-                    editor.set_block(AIR, wall_x, y, z, None, None);
-                }
-            }
-        }
-
-        // North / south shared wall.
-        if a.max_z + 1 == b.min_z || b.max_z + 1 == a.min_z {
-            let wall_z = if a.max_z + 1 == b.min_z {
-                a.max_z
-            } else {
-                a.min_z
-            };
-
-            for x in (door.x - half)..=(door.x + half) {
-                if x < min_x || x > max_x {
-                    continue;
-                }
-
-                if x < a.min_x.min(b.min_x) || x > a.max_x.max(b.max_x) {
-                    continue;
-                }
-
-                for y in (floor_y + 1)..=(floor_y + 3) {
-                    editor.set_block(AIR, x, y, wall_z, None, None);
-                }
-            }
-        }
-    }
+    println!("[BI ROOM] MATERIALIZATION END");
 
     // ---------------------------------------------------------
     // Main entrance rendering
     // ---------------------------------------------------------
     //
-    // The entrance was already detected from real-world building
-    // intelligence. Materialize that existing entrance here.
+    // IMPORTANT:
+    // The main entrance is NOT an interior-room object.
     //
-    // This does NOT create, move, or redefine the building entrance.
-    // It only places the Minecraft door at the already-decided
-    // real-world entrance coordinate.
+    // It is allowed to modify the already reconstructed BUILDING
+    // EXTERIOR wall, because the doorway is part of the real-world
+    // building entrance.
     //
+    // Therefore:
+    //   - cached_floor_area is NOT used as the sole gate here.
+    //   - The authoritative entrance coordinate comes ONLY from
+    //     planned_building.doorway_plan.main_entrance.
+    //   - BBox is never expanded.
+    //   - The building footprint is never regenerated.
+    //   - The renderer never invents another entrance.
+    //   - The door opening is restricted to the existing building
+    //     renderer bounds.
+    //   - The semantic entrance coordinate remains authoritative.
+    //
+    // Interior rooms/furniture remain strictly constrained by
+    // cached_floor_area elsewhere in this renderer.
+    // ---------------------------------------------------------
     if let Some(main_door) = planned_building.doorway_plan.main_entrance {
         if let (Some(x), Some(z), Some(side)) = (main_door.x, main_door.z, main_door.side) {
             let orientation = match side {
@@ -470,119 +572,178 @@ pub fn generate_intelligent_building_interior(
             let floor_y = floor_levels.first().copied().unwrap_or(start_y_offset);
 
             let door_y = floor_y + 1;
+            let width = main_door.width.max(1);
 
-            if x >= min_x && x <= max_x && z >= min_z && z <= max_z {
+            // -----------------------------------------------------
+            // Safety bounds.
+            //
+            // The entrance may modify the existing building wall,
+            // but it may NEVER escape the renderer's existing
+            // building bounds.
+            // -----------------------------------------------------
+            if x < min_x || x > max_x || z < min_z || z > max_z {
+                println!(
+                    "[BI MAIN DOOR] SKIP outside existing building bounds: ({}, {})",
+                    x, z
+                );
+            } else {
+                let half = width / 2;
+
+                // -------------------------------------------------
+                // Open the exact authoritative entrance anchor.
+                //
+                // North/South:
+                //   width extends along X.
+                //
+                // East/West:
+                //   width extends along Z.
+                //
+                // Only the doorway opening itself is modified.
+                // No surrounding exterior geometry is touched.
+                // -------------------------------------------------
+                match side {
+                    crate::element_processing::building_intelligence::EntranceSide::North
+                    | crate::element_processing::building_intelligence::EntranceSide::South => {
+                        for dx in -half..=(width - half - 1) {
+                            let door_x = x + dx;
+
+                            if door_x < min_x || door_x > max_x {
+                                continue;
+                            }
+
+                            for y in door_y..=(door_y + 1) {
+                                editor.set_block_absolute(AIR, door_x, y, z, None, Some(&[]));
+                            }
+                        }
+                    }
+
+                    crate::element_processing::building_intelligence::EntranceSide::East
+                    | crate::element_processing::building_intelligence::EntranceSide::West => {
+                        for dz in -half..=(width - half - 1) {
+                            let door_z = z + dz;
+
+                            if door_z < min_z || door_z > max_z {
+                                continue;
+                            }
+
+                            for y in door_y..=(door_y + 1) {
+                                editor.set_block_absolute(AIR, x, y, door_z, None, Some(&[]));
+                            }
+                        }
+                    }
+                }
+
+                // -------------------------------------------------
+                // Materialize the actual entrance door.
+                //
+                // Use the SAME authoritative anchor used for the
+                // opening. Never reconstruct the door position from
+                // the building bounding box.
+                // -------------------------------------------------
                 let lower = interior_door_block_with_state(orientation, false, false, false);
+
                 let upper = interior_door_block_with_state(orientation, true, false, false);
 
                 editor.set_block_with_properties_absolute(lower, x, door_y, z, None, None);
+
                 editor.set_block_with_properties_absolute(upper, x, door_y + 1, z, None, None);
+
+                println!(
+                    "[BI MAIN DOOR] MATERIALIZED anchor=({}, {}) side={:?} width={} y={}..{}",
+                    x,
+                    z,
+                    side,
+                    width,
+                    door_y,
+                    door_y + 1
+                );
             }
+        } else {
+            println!("[BI MAIN DOOR] SKIP incomplete authoritative entrance data");
         }
     }
 
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
     // Interior doorway rendering
     // ---------------------------------------------------------
     //
-
-    // Materialize each approved doorway as a two-block oak door.
-    // Geometry/placement remains bounded by the existing doorway validation above.
-    for door in &planned_building.doorway_plan.doors {
-        let Some(from_room) = planned_building.room_graph.room(door.from_room) else {
-            continue;
-        };
-
-        let floor_y = floor_levels
-            .get(from_room.floor)
-            .copied()
-            .unwrap_or(start_y_offset + (from_room.floor as i32 * 4));
-
-        let orientation = match door.orientation {
-            DoorOrientation::HorizontalWall => "north",
-            DoorOrientation::VerticalWall => "east",
-        };
-
-        let x = door.x;
-        let z = door.z;
-        let door_y = floor_y + 1;
-
-        // Consume semantic DoorKind from the RoomGraph / DoorwayPlan.
-        match door.door_kind {
-            crate::element_processing::building_intelligence::decision::doors::DoorKind::MainEntrance
-            | crate::element_processing::building_intelligence::decision::doors::DoorKind::Interior
-            | crate::element_processing::building_intelligence::decision::doors::DoorKind::Service => {
-                let lower = interior_door_block_with_state(orientation, false, false, false);
-                let upper = interior_door_block_with_state(orientation, true, false, false);
-
-                editor.set_block_with_properties_absolute(lower, x, door_y, z, None, None);
-                editor.set_block_with_properties_absolute(upper, x, door_y + 1, z, None, None);
-            }
-        }
-    }
-
-    // DoorwayPlan contains only semantic doorway intents derived
-    // from already-existing room geometry.
+    // HARD PHYSICAL RULE:
     //
-    // This renderer:
-    // - never expands a room
-    // - never modifies the building footprint
-    // - never modifies BBox
-    // - only removes wall blocks inside the shared room boundary
+    // RoomGraph / DoorwayPlan = semantic intent
+    // FloorPlan = semantic room geometry
+    // cached_floor_area = REAL reconstructed interior footprint
     //
+    // Interior doors MUST NEVER create space outside the
+    // reconstructed building interior.
+    //
+    // Therefore:
+    //
+    //   1. Find the authoritative shared wall from FloorPlan.
+    //   2. Clamp the requested doorway width to that wall.
+    //   3. Validate EVERY doorway cell against cached_floor_area.
+    //   4. If ANY cell is invalid -> modify ZERO blocks.
+    //   5. Only after complete validation, open the wall and
+    //      materialize the actual Minecraft door.
+    //
+    // This stage NEVER modifies:
+    //   - FloorPlan geometry
+    //   - RoomGraph topology
+    //   - building footprint
+    //   - BBox
+    //   - cached_floor_area
+    //
+    // ---------------------------------------------------------
+
     for door in &planned_building.doorway_plan.doors {
         let Some(from_room) = planned_building.room_graph.rooms.get(door.from_room) else {
+            println!(
+                "[BI INTERIOR DOOR] SKIP invalid from_room={}",
+                door.from_room
+            );
             continue;
         };
 
         let Some(to_room) = planned_building.room_graph.rooms.get(door.to_room) else {
+            println!("[BI INTERIOR DOOR] SKIP invalid to_room={}", door.to_room);
             continue;
         };
 
+        // Interior doors are same-floor connections only.
         if from_room.floor != to_room.floor {
+            println!(
+                "[BI INTERIOR DOOR] SKIP different floors {} -> {}",
+                from_room.floor, to_room.floor
+            );
             continue;
         }
 
         let Some(floor_plan) = planned_building.floor_plans.get(from_room.floor) else {
+            println!(
+                "[BI INTERIOR DOOR] SKIP missing floor plan floor={}",
+                from_room.floor
+            );
             continue;
         };
 
-        let rooms_on_floor = &floor_plan.rooms;
-
-        let room_index = |room_id: usize| -> Option<usize> {
-            let node = planned_building.room_graph.rooms.get(room_id)?;
-
-            rooms_on_floor
-                .iter()
-                .enumerate()
-                .filter(|(_, room)| room.room_type == node.room_type)
-                .nth(
-                    planned_building
-                        .room_graph
-                        .rooms
-                        .iter()
-                        .filter(|other| {
-                            other.floor == node.floor && other.room_type == node.room_type
-                        })
-                        .position(|other| other.id == room_id)?,
-                )
-                .map(|(index, _)| index)
-        };
-
-        let Some(from_index) = room_index(door.from_room) else {
+        let Some(from_plan) = floor_plan.rooms.get(from_room.floor_room_index) else {
+            println!(
+                "[BI INTERIOR DOOR] SKIP missing from room plan floor={} room={}",
+                from_room.floor, from_room.floor_room_index
+            );
             continue;
         };
 
-        let Some(to_index) = room_index(door.to_room) else {
+        let Some(to_plan) = floor_plan.rooms.get(to_room.floor_room_index) else {
+            println!(
+                "[BI INTERIOR DOOR] SKIP missing to room plan floor={} room={}",
+                to_room.floor, to_room.floor_room_index
+            );
             continue;
         };
 
-        let Some(from_bounds) = rooms_on_floor.get(from_index).map(|r| r.bounds) else {
-            continue;
-        };
-
-        let Some(to_bounds) = rooms_on_floor.get(to_index).map(|r| r.bounds) else {
-            continue;
-        };
+        let a = from_plan.bounds;
+        let b = to_plan.bounds;
 
         let floor_y = floor_levels
             .get(from_room.floor)
@@ -591,348 +752,248 @@ pub fn generate_intelligent_building_interior(
 
         let requested_width = door.width.max(1);
 
-        match door.orientation {
-            crate::element_processing::building_intelligence::circulation::DoorOrientation::VerticalWall => {
-                // Shared wall must be the same X coordinate.
-                let Some(wall_x) = (if from_bounds.max_x + 1 == to_bounds.min_x {
-                    Some(from_bounds.max_x)
-                } else if to_bounds.max_x + 1 == from_bounds.min_x {
-                    Some(from_bounds.min_x)
-                } else {
-                    None
-                }) else {
-                    continue;
-                };
-
-                // The door can ONLY occupy the intersection of both rooms.
-                let shared_min_z = from_bounds.min_z.max(to_bounds.min_z);
-                let shared_max_z = from_bounds.max_z.min(to_bounds.max_z);
-
-                if shared_min_z > shared_max_z {
-                    continue;
-                }
-
-                let available = shared_max_z - shared_min_z + 1;
-                let width = requested_width.min(available);
-
-                let center_z = door.z.clamp(shared_min_z, shared_max_z);
-                let mut start_z = center_z - ((width - 1) / 2);
-                let mut end_z = start_z + width - 1;
-
-                if start_z < shared_min_z {
-                    start_z = shared_min_z;
-                    end_z = start_z + width - 1;
-                }
-
-                if end_z > shared_max_z {
-                    end_z = shared_max_z;
-                    start_z = end_z - width + 1;
-                }
-
-                for z in start_z..=end_z {
-                    for y in (floor_y + 1)..=(floor_y + 3) {
-                        if z < from_bounds.min_z
-                            || z > from_bounds.max_z
-                            || z < to_bounds.min_z
-                            || z > to_bounds.max_z
-                        {
-                            continue;
-                        }
-
-                        if wall_x < min_x
-                            || wall_x > max_x
-                            || z < min_z
-                            || z > max_z
-                        {
-                            continue;
-                        }
-
-                        editor.set_block(AIR, wall_x, y, z, None, None);
-                    }
-                }
-            }
-
-            crate::element_processing::building_intelligence::circulation::DoorOrientation::HorizontalWall => {
-                // Shared wall must be the same Z coordinate.
-                let Some(wall_z) = (if from_bounds.max_z + 1 == to_bounds.min_z {
-                    Some(from_bounds.max_z)
-                } else if to_bounds.max_z + 1 == from_bounds.min_z {
-                    Some(from_bounds.min_z)
-                } else {
-                    None
-                }) else {
-                    continue;
-                };
-
-                // The door can ONLY occupy the intersection of both rooms.
-                let shared_min_x = from_bounds.min_x.max(to_bounds.min_x);
-                let shared_max_x = from_bounds.max_x.min(to_bounds.max_x);
-
-                if shared_min_x > shared_max_x {
-                    continue;
-                }
-
-                let available = shared_max_x - shared_min_x + 1;
-                let width = requested_width.min(available);
-
-                let center_x = door.x.clamp(shared_min_x, shared_max_x);
-                let mut start_x = center_x - ((width - 1) / 2);
-                let mut end_x = start_x + width - 1;
-
-                if start_x < shared_min_x {
-                    start_x = shared_min_x;
-                    end_x = start_x + width - 1;
-                }
-
-                if end_x > shared_max_x {
-                    end_x = shared_max_x;
-                    start_x = end_x - width + 1;
-                }
-
-                for x in start_x..=end_x {
-                    for y in (floor_y + 1)..=(floor_y + 3) {
-                        if x < from_bounds.min_x
-                            || x > from_bounds.max_x
-                            || x < to_bounds.min_x
-                            || x > to_bounds.max_x
-                        {
-                            continue;
-                        }
-
-                        if x < min_x
-                            || x > max_x
-                            || wall_z < min_z
-                            || wall_z > max_z
-                        {
-                            continue;
-                        }
-
-                        editor.set_block(AIR, x, y, wall_z, None, None);
-                    }
-                }
-            }
-        }
-    }
-
-    // ---------------------------------------------------------
-    // Circulation intelligence consumer
-    // ---------------------------------------------------------
-    // Circulation is read-only intelligence generated from the
-    // existing RoomGraph, doorway plan, floor plans and furniture.
-    //
-    // The renderer consumes the result here only for validation
-    // and semantic routing decisions. It never changes:
-    // - room geometry
-    // - building footprint
-    // - BBox
-    // - geographic coordinates
-    //
-    // Whole-building circulation:
-    let circulation = &planned_building.circulation;
-
-    // BuildingCirculationPlan is the authoritative whole-building
-    // circulation consumer for the already-detected entrance room.
-    //
-    // This does NOT create, move, or redefine the entrance.
-    // It only consumes the entrance-room decision produced by
-    // Building Intelligence and carries that semantic into rendering.
-    let building_circulation = &planned_building.building_circulation;
-    let entrance_room = building_circulation.entrance_room;
-
-    let reachable_rooms = &building_circulation.reachable_rooms;
-    let isolated_rooms = &building_circulation.isolated_rooms;
-
-    // Deterministic semantic route from the detected entrance.
-    let circulation_route = &building_circulation.route;
-
-    // Per-floor interior circulation paths.
-    // These paths are validation data produced from existing geometry
-    // and furniture obstacles; they are not geometry-editing commands.
-    let floor_circulation = &planned_building.floor_circulation;
-
-    // BuildingCirculationPlan is the authoritative whole-building
-    // connectivity gate for downstream interior circulation rendering.
-    //
-    // The renderer does not recompute room connectivity here.
-    // It consumes the already-computed BuildingCirculationPlan and
-    // only materializes interior paths for rooms that are reachable
-    // from the authoritative entrance room.
-    let circulation_is_connected = circulation.is_connected();
-    let building_is_connected = building_circulation.is_connected();
-
-    let circulation_reachable_count = reachable_rooms.len();
-    let circulation_isolated_count = isolated_rooms.len();
-    let circulation_route_len = circulation_route.len();
-
-    // A valid whole-building circulation must have an entrance room.
-    // If the entrance room itself is not reachable according to the
-    // authoritative plan, no downstream room path is considered
-    // connected to the building entrance.
-    let entrance_is_reachable = entrance_room
-        .map(|room_id| reachable_rooms.contains(&room_id))
-        .unwrap_or(false);
-
-    // The route is a semantic room-id route generated from the same
-    // authoritative entrance. It is intentionally not converted into
-    // coordinates here because RoomGraph remains the source of room
-    // geometry.
-    let _circulation_route_valid = match entrance_room {
-        Some(room_id) => circulation_route.first().copied() == Some(room_id)
-            || circulation_route.is_empty(),
-        None => circulation_route.is_empty(),
-    };
-
-    // These values are intentionally consumed by the renderer's
-    // downstream circulation gate rather than assigned to `_` merely
-    // to silence warnings.
-    let _circulation_connected =
-        circulation_is_connected
-        && building_is_connected
-        && entrance_is_reachable
-        && circulation_reachable_count > 0
-        && circulation_isolated_count <= reachable_rooms.len();
-
-    for (floor_index, floor) in floor_circulation.iter().enumerate() {
-        let floor_y = floor_levels
-            .get(floor_index)
-            .copied()
-            .unwrap_or(start_y_offset + (floor_index as i32 * 4));
-
-        let Some(floor_plan) = planned_building.floor_plans.get(floor_index) else {
-            continue;
-        };
-
-        // ---------------------------------------------------------
-        // InteriorCirculationPlan -> reachable_rooms() consumer
-        // ---------------------------------------------------------
+        // -----------------------------------------------------
+        // CASE 1:
+        // Vertical shared wall.
+        // -----------------------------------------------------
         //
-        // Consume the planner's authoritative reachable-room count
-        // before materializing any per-room circulation path.
+        // Rooms touch along X:
         //
-        // This is a real downstream dependency:
-        // a floor with no reachable interior rooms has no walkable
-        // circulation volume to materialize.
-        let floor_reachable_rooms = floor.reachable_rooms();
+        //     A | B
+        //
+        // The wall itself is the shared X boundary.
+        // -----------------------------------------------------
 
-        if floor_reachable_rooms == 0 {
-            continue;
-        }
-
-        for room in &floor.rooms {
-            let room_id = room.room_id;
-
-            // ---------------------------------------------------------
-            // BuildingCirculationPlan -> InteriorCirculation consumer
-            // ---------------------------------------------------------
-            //
-            // InteriorCirculationPlan answers:
-            //   "Can I walk inside this individual room?"
-            //
-            // BuildingCirculationPlan answers:
-            //   "Is this room connected to the building entrance?"
-            //
-            // Both conditions must be true before the renderer
-            // materializes the calculated walkable path.
-            //
-            // This makes whole-building circulation an actual
-            // downstream dependency instead of a read-only statistic.
-            let building_reachable = reachable_rooms.contains(&room_id);
-
-            // Isolated rooms are explicitly rejected even if a local
-            // room-level path happens to be valid.
-            let building_isolated = isolated_rooms.contains(&room_id);
-
-            // Local room path + whole-building reachability are both
-            // required for physical walkable-volume materialization.
-            if !room.reachable
-                || !building_reachable
-                || building_isolated
-            {
-                continue;
-            }
-
-            // Materialize calculated interior circulation into the
-            // Minecraft walkable volume without changing geometry.
-
-            let Some(room_plan) = floor_plan
-                .rooms
-                .iter()
-                .find(|candidate| candidate.bounds.contains(room.entrance.x, room.entrance.z))
-            else {
-                continue;
+        if a.max_x + 1 == b.min_x || b.max_x + 1 == a.min_x {
+            let wall_x = if a.max_x + 1 == b.min_x {
+                a.max_x
+            } else {
+                b.max_x
             };
 
-            for cell in &room.path.cells {
-                if !room_plan.bounds.contains(cell.x, cell.z) {
-                    continue;
-                }
+            let shared_min_z = a.min_z.max(b.min_z);
+            let shared_max_z = a.max_z.min(b.max_z);
 
-                if cell.x < min_x || cell.x > max_x || cell.z < min_z || cell.z > max_z {
-                    continue;
-                }
+            if shared_min_z > shared_max_z {
+                println!("[BI INTERIOR DOOR] SKIP no shared Z wall");
+                continue;
+            }
 
-                // Preserve the existing floor and furniture.
-                // Only guarantee normal player-height clearance.
-                for y in (floor_y + 1)..=(floor_y + 2) {
-                    editor.set_block(AIR, cell.x, y, cell.z, None, None);
+            let available = shared_max_z - shared_min_z + 1;
+            let actual_width = requested_width.min(available);
+
+            if actual_width <= 0 {
+                continue;
+            }
+
+            let center_z = door.z.clamp(shared_min_z, shared_max_z);
+
+            let mut start_z = center_z - ((actual_width - 1) / 2);
+
+            let mut end_z = start_z + actual_width - 1;
+
+            if start_z < shared_min_z {
+                start_z = shared_min_z;
+                end_z = start_z + actual_width - 1;
+            }
+
+            if end_z > shared_max_z {
+                end_z = shared_max_z;
+                start_z = end_z - actual_width + 1;
+            }
+
+            // -------------------------------------------------
+            // TRANSACTIONAL VALIDATION
+            //
+            // Validate the complete horizontal span before
+            // writing ANY AIR.
+            // -------------------------------------------------
+
+            let mut valid = true;
+
+            for z in start_z..=end_z {
+                if !cached_floor_area_set.contains(&(wall_x, z)) {
+                    println!(
+                        "[BI INTERIOR DOOR] REJECT outside cached_floor_area: ({}, {})",
+                        wall_x, z
+                    );
+                    valid = false;
+                    break;
                 }
             }
+
+            if !valid {
+                continue;
+            }
+
+            // -------------------------------------------------
+            // Materialize ONLY after complete validation.
+            // -------------------------------------------------
+
+            for z in start_z..=end_z {
+                for y in (floor_y + 1)..=(floor_y + 2) {
+                    editor.set_block_absolute(AIR, wall_x, y, z, None, Some(&[]));
+                }
+            }
+
+            let center_z = start_z + ((actual_width - 1) / 2);
+
+            let lower = interior_door_block_with_state("east", false, false, false);
+
+            let upper = interior_door_block_with_state("east", true, false, false);
+
+            editor.set_block_with_properties_absolute(
+                lower,
+                wall_x,
+                floor_y + 1,
+                center_z,
+                None,
+                None,
+            );
+
+            editor.set_block_with_properties_absolute(
+                upper,
+                wall_x,
+                floor_y + 2,
+                center_z,
+                None,
+                None,
+            );
+
+            println!(
+                "[BI INTERIOR DOOR] MATERIALIZED vertical wall=({}, {}) width={} floor_y={}",
+                wall_x, center_z, actual_width, floor_y
+            );
+
+            continue;
         }
-    }
 
-    // ---------------------------------------------------------
-    // Vertical access planning
-    // ---------------------------------------------------------
-    //
-    // BuildingDecision determines WHAT kind of vertical access
-    // the building needs.
-    //
-    // VerticalAccessPlanner determines WHERE that access can
-    // physically exist using the existing RoomGraph + FloorPlans.
-    //
-    // No blocks are rendered in this stage.
-    //
+        // -----------------------------------------------------
+        // CASE 2:
+        // Horizontal shared wall.
+        // -----------------------------------------------------
+        //
+        // Rooms touch along Z:
+        //
+        //     A
+        //     -
+        //     B
+        //
+        // The wall itself is the shared Z boundary.
+        // -----------------------------------------------------
 
-    let vertical_plans = planned_building.circulation.vertical_access_plans();
+        if a.max_z + 1 == b.min_z || b.max_z + 1 == a.min_z {
+            let wall_z = if a.max_z + 1 == b.min_z {
+                a.max_z
+            } else {
+                b.max_z
+            };
 
-    // VerticalAccessDecision.floors is the semantic contract for
-    // how many floors the building requires vertical circulation for.
-    // The planner still consumes the actual FloorPlans + RoomGraph,
-    // so geometry remains authoritative and unchanged.
-    debug_assert_eq!(
-        planned_building.decision.vertical.floors,
-        planned_building.context.floors
-    );
+            let shared_min_x = a.min_x.max(b.min_x);
+            let shared_max_x = a.max_x.min(b.max_x);
 
-    // ---------------------------------------------------------
-    // Vertical access rendering
-    // ---------------------------------------------------------
-    //
-    // The planner decides WHERE vertical access is physically
-    // compatible with the existing floor geometry.
-    //
-    // The renderer only places the requested access blocks.
-    //
-    // No room geometry, building footprint or BBox is modified.
-    //
+            if shared_min_x > shared_max_x {
+                println!("[BI INTERIOR DOOR] SKIP no shared X wall");
+                continue;
+            }
 
-    {
-        let mut vertical_editor = WorldEditorVerticalAdapter { editor };
+            let available = shared_max_x - shared_min_x + 1;
+            let actual_width = requested_width.min(available);
 
-        for plan in vertical_plans {
-            let transition_plans = planned_building
-                .circulation
-                .vertical_access_between(plan.from_floor, plan.to_floor);
+            if actual_width <= 0 {
+                continue;
+            }
 
-            debug_assert!(transition_plans.iter().any(|candidate| {
-                candidate.from_floor == plan.from_floor
-                    && candidate.to_floor == plan.to_floor
-                    && candidate.x == plan.x
-                    && candidate.z == plan.z
-            }));
+            let center_x = door.x.clamp(shared_min_x, shared_max_x);
 
-            render_vertical_access(&mut vertical_editor, plan, OAK_STAIRS, LADDER);
+            let mut start_x = center_x - ((actual_width - 1) / 2);
+
+            let mut end_x = start_x + actual_width - 1;
+
+            if start_x < shared_min_x {
+                start_x = shared_min_x;
+                end_x = start_x + actual_width - 1;
+            }
+
+            if end_x > shared_max_x {
+                end_x = shared_max_x;
+                start_x = end_x - actual_width + 1;
+            }
+
+            // -------------------------------------------------
+            // TRANSACTIONAL VALIDATION
+            //
+            // Validate the complete horizontal span before
+            // writing ANY AIR.
+            // -------------------------------------------------
+
+            let mut valid = true;
+
+            for x in start_x..=end_x {
+                if !cached_floor_area_set.contains(&(x, wall_z)) {
+                    println!(
+                        "[BI INTERIOR DOOR] REJECT outside cached_floor_area: ({}, {})",
+                        x, wall_z
+                    );
+                    valid = false;
+                    break;
+                }
+            }
+
+            if !valid {
+                continue;
+            }
+
+            // -------------------------------------------------
+            // Materialize ONLY after complete validation.
+            // -------------------------------------------------
+
+            for x in start_x..=end_x {
+                for y in (floor_y + 1)..=(floor_y + 2) {
+                    editor.set_block_absolute(AIR, x, y, wall_z, None, Some(&[]));
+                }
+            }
+
+            let center_x = start_x + ((actual_width - 1) / 2);
+
+            let lower = interior_door_block_with_state("north", false, false, false);
+
+            let upper = interior_door_block_with_state("north", true, false, false);
+
+            editor.set_block_with_properties_absolute(
+                lower,
+                center_x,
+                floor_y + 1,
+                wall_z,
+                None,
+                None,
+            );
+
+            editor.set_block_with_properties_absolute(
+                upper,
+                center_x,
+                floor_y + 2,
+                wall_z,
+                None,
+                None,
+            );
+
+            println!(
+                "[BI INTERIOR DOOR] MATERIALIZED horizontal wall=({}, {}) width={} floor_y={}",
+                center_x, wall_z, actual_width, floor_y
+            );
+
+            continue;
         }
+
+        // -----------------------------------------------------
+        // No physical shared wall.
+        // -----------------------------------------------------
+
+        println!(
+            "[BI INTERIOR DOOR] SKIP no physical shared wall: from={} to={}",
+            door.from_room, door.to_room
+        );
     }
 
     // ---------------------------------------------------------
@@ -943,38 +1004,99 @@ pub fn generate_intelligent_building_interior(
     // furniture_blocks() converts that intent into actual Minecraft
     // block combinations.
     //
-    // Every placement remains strictly inside:
-    //   1. the owning Room bounds
-    //   2. the existing building bounds
-    //   3. the existing BBox enforced by WorldEditor.
+    // FurnitureItem.room_id is the ONLY ownership key.
+    //
+    // It identifies RoomGraph::RoomNode.id, which resolves to:
+    //
+    //     room_id
+    //        ↓
+    //     RoomGraph::RoomNode
+    //        ↓
+    //     floor
+    //        ↓
+    //     floor_room_index
+    //        ↓
+    //     FloorPlan.rooms[floor_room_index]
+    //
+    // NEVER resolve furniture ownership by:
+    //   - RoomType
+    //   - matching semantic room types
+    //   - renderer-side room ordering
+    //
+    // Physical placement remains strictly constrained by:
+    //   1. owning Room bounds
+    //   2. cached_floor_area
+    //   3. renderer building bounds
+    //   4. WorldEditor BBox
     //
 
-    let mut room_usage: std::collections::HashMap<RoomType, usize> =
-        std::collections::HashMap::new();
-
     for furniture in &planned_building.furniture {
-        let room_index = room_usage.entry(furniture.room_type).or_insert(0);
-
-        let matching_rooms: Vec<_> = planned_building
-            .floor_plans
+        // -----------------------------------------------------
+        // 1. Resolve the unique owning Room through RoomGraph
+        // -----------------------------------------------------
+        let Some(room_node) = planned_building
+            .room_graph
+            .rooms
             .iter()
-            .enumerate()
-            .flat_map(|(floor_index, plan)| {
-                plan.rooms
-                    .iter()
-                    .filter(move |room| room.room_type == furniture.room_type)
-                    .map(move |room| (floor_index, room))
-            })
-            .collect();
-
-        if matching_rooms.is_empty() {
+            .find(|node| node.id == furniture.room_id)
+        else {
+            println!(
+                "[BI FURNITURE] SKIP invalid room ownership: room_id={} kind={:?}",
+                furniture.room_id,
+                furniture.kind
+            );
             continue;
+        };
+
+        // -----------------------------------------------------
+        // 2. Resolve the concrete FloorPlan
+        // -----------------------------------------------------
+        let floor_index = room_node.floor;
+
+        let Some(floor_plan) = planned_building
+            .floor_plans
+            .get(floor_index)
+        else {
+            println!(
+                "[BI FURNITURE] SKIP invalid floor ownership: room_id={} floor={}",
+                furniture.room_id,
+                floor_index
+            );
+            continue;
+        };
+
+        // -----------------------------------------------------
+        // 3. Resolve the concrete Room
+        // -----------------------------------------------------
+        let Some(room) = floor_plan
+            .rooms
+            .get(room_node.floor_room_index)
+        else {
+            println!(
+                "[BI FURNITURE] SKIP invalid room index: room_id={} floor={} floor_room_index={}",
+                furniture.room_id,
+                floor_index,
+                room_node.floor_room_index
+            );
+            continue;
+        };
+
+        // -----------------------------------------------------
+        // Ownership integrity check
+        // -----------------------------------------------------
+        //
+        // The semantic room type is metadata only.
+        // It must NEVER be used to select the owning room.
+        //
+        // If it differs, ownership still follows room_id.
+        if room.room_type != furniture.room_type {
+            println!(
+                "[BI FURNITURE] ROOM TYPE MISMATCH: room_id={} graph_type={:?} furniture_type={:?} -- ownership follows room_id",
+                furniture.room_id,
+                room.room_type,
+                furniture.room_type
+            );
         }
-
-        let selected_index = (*room_index).min(matching_rooms.len() - 1);
-        let (floor_index, room) = matching_rooms[selected_index];
-
-        *room_index += 1;
 
         let floor_y = floor_levels
             .get(floor_index)
@@ -984,20 +1106,78 @@ pub fn generate_intelligent_building_interior(
         let origin_x = room.bounds.min_x + furniture.relative_x;
         let origin_z = room.bounds.min_z + furniture.relative_z;
 
-        for &(block, dx, dy, dz) in furniture_blocks(furniture.kind) {
+        // -----------------------------------------------------
+        // Validate the COMPLETE furniture footprint first.
+        //
+        // A furniture item is atomic: if any block would leave
+        // the owning room, cached floor area, renderer building
+        // bounds, or BBox boundary, reject the ENTIRE item.
+        // -----------------------------------------------------
+        let blocks = furniture_blocks(furniture.kind);
+
+        let mut valid_placement = true;
+
+        for &(_, dx, _dy, dz) in blocks {
+            let x = origin_x + dx;
+            let z = origin_z + dz;
+
+            // Owning Room is a semantic/planning boundary.
+            if !room.bounds.contains(x, z) {
+                println!(
+                    "[BI FURNITURE] REJECT outside owning room: floor={} room_id={} kind={:?} pos=({}, {})",
+                    floor_index,
+                    furniture.room_id,
+                    furniture.kind,
+                    x,
+                    z
+                );
+                valid_placement = false;
+                break;
+            }
+
+            // cached_floor_area is the authoritative physical
+            // boundary of the reconstructed real-world building.
+            if !cached_floor_area_set.contains(&(x, z)) {
+                println!(
+                    "[BI FURNITURE] REJECT outside cached_floor_area: floor={} room_id={} kind={:?} pos=({}, {})",
+                    floor_index,
+                    furniture.room_id,
+                    furniture.kind,
+                    x,
+                    z
+                );
+                valid_placement = false;
+                break;
+            }
+
+            // Renderer building bounds remain an additional guard.
+            if x < min_x || x > max_x || z < min_z || z > max_z {
+                println!(
+                    "[BI FURNITURE] REJECT outside renderer bounds: floor={} room_id={} kind={:?} pos=({}, {})",
+                    floor_index,
+                    furniture.room_id,
+                    furniture.kind,
+                    x,
+                    z
+                );
+                valid_placement = false;
+                break;
+            }
+        }
+
+        if !valid_placement {
+            continue;
+        }
+
+        // -----------------------------------------------------
+        // Commit only after the COMPLETE footprint passed.
+        // -----------------------------------------------------
+        for &(block, dx, dy, dz) in blocks {
             let x = origin_x + dx;
             let y = floor_y + 1 + dy;
             let z = origin_z + dz;
 
-            if !room.bounds.contains(x, z) {
-                continue;
-            }
-
-            if x < min_x || x > max_x || z < min_z || z > max_z {
-                continue;
-            }
-
-            editor.set_block(block, x, y, z, None, None);
+            editor.set_block_absolute(block, x, y, z, None, None);
         }
     }
 
@@ -1045,11 +1225,11 @@ pub fn generate_intelligent_building_interior(
 
         match light.kind {
             crate::element_processing::subprocessor::interior::decision::LightKind::Ceiling => {
-                editor.set_block(GLOWSTONE, light.x, floor_y + 3, light.z, None, None);
+                editor.set_block_absolute(GLOWSTONE, light.x, floor_y + 3, light.z, None, None);
             }
 
             crate::element_processing::subprocessor::interior::decision::LightKind::Wall => {
-                editor.set_block(LANTERN, light.x, floor_y + 2, light.z, None, None);
+                editor.set_block_absolute(LANTERN, light.x, floor_y + 2, light.z, None, None);
             }
         }
     }
@@ -1065,7 +1245,71 @@ pub fn generate_intelligent_building_interior(
     let _furniture_count = planned_building.furniture.len();
     let _has_entrance = planned_building.entrance.is_some();
 
-    let _vertical_connections = planned_building.circulation.vertical_access_plans().len();
+    // ---------------------------------------------------------
+    // Vertical access rendering
+    // ---------------------------------------------------------
+    //
+    // HARD RULE:
+    // cached_floor_area is the authoritative reconstructed physical
+    // interior footprint.
+    //
+    // A vertical-access structure is rendered ONLY when EVERY X/Z
+    // coordinate in its complete physical footprint exists in
+    // cached_floor_area.
+    //
+    // We never:
+    // - expand cached_floor_area
+    // - modify cached_floor_area
+    // - modify FloorPlan geometry
+    // - modify Room geometry
+    // - expand the building BBox
+    // - infer missing interior floor cells
+    //
+    // If one single footprint cell is outside cached_floor_area,
+    // the ENTIRE vertical-access structure is rejected.
+    let cached_floor_area_set: std::collections::HashSet<(i32, i32)> =
+        cached_floor_area.iter().copied().collect();
+
+    let vertical_plans =
+        planned_building.circulation.vertical_access_plans();
+
+    for plan in vertical_plans {
+        let footprint = plan.footprint_cells();
+
+        if footprint.is_empty() {
+            eprintln!(
+                "[BI VERTICAL] REJECT: empty vertical-access footprint"
+            );
+            continue;
+        }
+
+        let outside_cell = footprint
+            .iter()
+            .find(|&&(x, z)| !cached_floor_area_set.contains(&(x, z)));
+
+        if let Some(&(x, z)) = outside_cell {
+            eprintln!(
+                "[BI VERTICAL] REJECT: footprint outside cached_floor_area at ({}, {})",
+                x,
+                z
+            );
+            continue;
+        }
+
+        // Only an already-approved footprint reaches the physical
+        // Minecraft renderer.
+        let mut vertical_editor = WorldEditorVerticalAdapter { editor };
+
+        render_vertical_access(
+            &mut vertical_editor,
+            plan,
+            BlockWithProperties::new(OAK_STAIRS, None),
+            BlockWithProperties::new(LADDER, None),
+            cached_floor_area,
+        );
+    }
+
+    let _vertical_connections = vertical_plans.len();
 
     let _floor_plans: &[FloorPlan] = &planned_building.floor_plans;
 

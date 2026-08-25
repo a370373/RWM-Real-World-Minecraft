@@ -252,19 +252,28 @@ impl SpatialConstraints {
 
         let entrances = self.entrance_count(room, floor);
 
-        if is_entrance_room(allocation.room_type) {
+        if allocation.entrance_preferred {
+            if entrances > 0 {
+                // Prefer the semantic room selected for the
+                // existing real-world primary entrance.
+                score += 180;
+            } else if !self.entrances.is_empty() {
+                // Keep the preferred room close to the existing
+                // entrance whenever possible.
+                score -= 100;
+            }
+        } else if is_entrance_room(allocation.room_type) {
             if entrances > 0 {
                 score += 140;
             } else if !self.entrances.is_empty() {
                 score -= 80;
             }
         } else if entrances > 0 {
-            // Ordinary rooms touching the main entrance are not
-            // forbidden, but are less desirable.
+            // Ordinary rooms may touch the real-world entrance,
+            // but are less desirable than the preferred room.
             score -= 15;
         }
 
-        // -----------------------------------------------------
         // ROOM SEMANTIC PREFERENCES
         // -----------------------------------------------------
 
@@ -332,11 +341,10 @@ impl SpatialConstraints {
                 score -= 12;
             }
 
-            let touches_boundary =
-                room.min_x == self.bounds.min_x
-                    || room.max_x == self.bounds.max_x
-                    || room.min_z == self.bounds.min_z
-                    || room.max_z == self.bounds.max_z;
+            let touches_boundary = room.min_x == self.bounds.min_x
+                || room.max_x == self.bounds.max_x
+                || room.min_z == self.bounds.min_z
+                || room.max_z == self.bounds.max_z;
 
             if touches_boundary {
                 score += 18;
@@ -389,9 +397,7 @@ impl SpatialConstraints {
                     }
                 }
 
-                RoomType::Ward
-                | RoomType::ExaminationRoom
-                | RoomType::TreatmentRoom => {
+                RoomType::Ward | RoomType::ExaminationRoom | RoomType::TreatmentRoom => {
                     // Clinical rooms benefit from daylight when
                     // available, but this remains a soft preference.
                     if windows > 0 {
@@ -508,11 +514,7 @@ fn is_healthcare_support_room(room_type: RoomType) -> bool {
 }
 
 fn prefers_exterior_access(room_type: RoomType) -> bool {
-    matches!(
-        room_type,
-        RoomType::LoadingArea
-            | RoomType::PlatformArea
-    )
+    matches!(room_type, RoomType::LoadingArea | RoomType::PlatformArea)
 }
 
 fn prefers_interior(room_type: RoomType) -> bool {

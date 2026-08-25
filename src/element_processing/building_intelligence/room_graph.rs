@@ -586,6 +586,31 @@ pub fn build_room_graph(
             continue;
         };
 
+        /*
+         * ---------------------------------------------------------
+         * VERTICAL ACCESS CANDIDATE SELECTION
+         * ---------------------------------------------------------
+         *
+         * Multiple rooms on adjacent floors may overlap in X/Z.
+         *
+         * That overlap only means that a vertical connection is
+         * geometrically possible. It does NOT mean that every pair
+         * of rooms needs its own staircase.
+         *
+         * Collect all valid candidates first, then select the
+         * closest lower/upper room pair for this floor transition.
+         *
+         * Result:
+         *
+         *     Floor N -> Floor N+1
+         *
+         * produces at most ONE VerticalAccess connection.
+         *
+         * The actual physical stair footprint is still decided by
+         * VerticalAccessPlanner.
+         */
+        let mut candidates: Vec<(i32, usize, usize)> = Vec::new();
+
         for (lower_index, &lower_id) in lower_ids.iter().enumerate() {
             let Some(lower_room) = lower_plan.rooms.get(lower_index) else {
                 continue;
@@ -596,16 +621,43 @@ pub fn build_room_graph(
                     continue;
                 };
 
-                if rects_overlap(lower_room.bounds, upper_room.bounds) {
-                    graph.connect(
-                        lower_id,
-                        upper_id,
-                        RoomConnectionKind::VerticalAccess,
-                        DoorKind::Interior,
-                        2,
-                    );
+                if !rects_overlap(lower_room.bounds, upper_room.bounds) {
+                    continue;
                 }
+
+                let (lower_x, lower_z) = lower_room.bounds.center();
+                let (upper_x, upper_z) = upper_room.bounds.center();
+
+                /*
+                 * Prefer the pair whose room centers are closest.
+                 *
+                 * This keeps the vertical connection inside the
+                 * existing floor-plan geometry instead of creating
+                 * arbitrary cross-building vertical links.
+                 */
+                let distance = (lower_x - upper_x).abs() + (lower_z - upper_z).abs();
+
+                candidates.push((distance, lower_id, upper_id));
             }
+        }
+
+        /*
+         * Choose exactly one best candidate for this floor
+         * transition.
+         *
+         * If there is no geometrically overlapping room pair,
+         * no vertical connection is created.
+         */
+        if let Some((_, lower_id, upper_id)) =
+            candidates.into_iter().min_by_key(|candidate| candidate.0)
+        {
+            graph.connect(
+                lower_id,
+                upper_id,
+                RoomConnectionKind::VerticalAccess,
+                DoorKind::Interior,
+                2,
+            );
         }
     }
 

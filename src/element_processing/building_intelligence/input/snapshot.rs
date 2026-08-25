@@ -18,12 +18,47 @@ pub enum WindowSide {
     West,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ExistingDoor {
     pub x: i32,
     pub z: i32,
     pub width: i32,
     pub side: WindowSide,
+
+    /// Original real-world semantic tags carried by the mapped node.
+    /// READ-ONLY reconstruction input.
+    pub tags: Vec<(String, String)>,
+
+    /// Semantic source of the mapped door.
+    ///
+    /// This records why the node was accepted as a real-world door:
+    /// - entrance=* / entrance
+    /// - door=* / door
+    /// - both
+    pub source: DoorSource,
+
+    /// Manhattan distance from this specific door to the nearest
+    /// reconstructed road evidence, when available.
+    pub road_distance: Option<i32>,
+
+    /// Manhattan distance from this specific door to the nearest
+    /// reconstructed footway/path evidence, when available.
+    ///
+    /// Kept optional until the real footway/path source is wired.
+    pub footway_distance: Option<i32>,
+
+    /// Manhattan distance from this specific door to the nearest
+    /// reconstructed parking evidence, when available.
+    ///
+    /// Kept optional until the real parking source is wired.
+    pub parking_distance: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoorSource {
+    Entrance,
+    Door,
+    EntranceAndDoor,
 }
 
 #[derive(Debug, Clone)]

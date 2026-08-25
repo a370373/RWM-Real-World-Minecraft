@@ -1,3 +1,4 @@
+use crate::element_processing::building_intelligence::room_graph::RoomGraph;
 use crate::element_processing::building_intelligence::{
     furniture_profile, FurnitureItem, FurnitureKind,
 };
@@ -36,13 +37,45 @@ impl FurniturePlanner {
         &self,
         floor_plan: &FloorPlan,
         constraints: &SpatialConstraints,
+        room_graph: &RoomGraph,
         floor: i32,
     ) -> Vec<FurnitureItem> {
         let mut furniture = Vec::new();
 
-        for (room_id, room) in floor_plan.rooms.iter().enumerate() {
-            self.plan_room(room_id, room, constraints, floor, &mut furniture);
+        for (floor_room_index, room) in floor_plan.rooms.iter().enumerate() {
+            let Some(room_node) = room_graph.rooms.iter().find(|node| {
+                node.floor == floor as usize && node.floor_room_index == floor_room_index
+            }) else {
+                continue;
+            };
+
+            // FurnitureItem.room_id is the ONLY ownership key.
+            //
+            // It must be the stable RoomGraph::RoomNode.id.
+            // Renderer resolves:
+            //
+            //     room_id
+            //        -> RoomGraph::RoomNode
+            //        -> floor
+            //        -> floor_room_index
+            //        -> FloorPlan.rooms[floor_room_index]
+            //
+            // Never use RoomType or local room ordering as ownership.
+            self.plan_room(
+                room_node.id,
+                room,
+                constraints,
+                floor,
+                &mut furniture,
+            );
         }
+
+        eprintln!(
+            "[RWM-FURNITURE] floor={} rooms={} furniture={}",
+            floor,
+            floor_plan.rooms.len(),
+            furniture.len()
+        );
 
         furniture
     }

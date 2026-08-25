@@ -195,7 +195,7 @@ fn process_element(
     building_footprints: &CoordinateBitmap,
     building_passages: &CoordinateBitmap,
     road_mask: &CoordinateBitmap,
-    _path_mask: &crate::floodfill_cache::PathMaskBitmap,
+    path_mask: &crate::floodfill_cache::PathMaskBitmap,
     rail_mask: &CoordinateBitmap,
     xzbbox: &XZBBox,
     big_water_field: &crate::water_depth::BigWaterField,
@@ -236,6 +236,7 @@ fn process_element(
                     flood_fill_cache,
                     building_passages,
                     road_mask,
+                    path_mask,
                     group_seed,
                 );
             } else if way.tags.contains_key("highway") {
@@ -334,7 +335,8 @@ fn process_element(
         }
         ProcessedElement::Node(node) => {
             if node.tags.contains_key("door") || node.tags.contains_key("entrance") {
-                doors::generate_doors(editor, node);
+                // Door generation is owned by Building Intelligence.
+                // Do not materialize raw OSM door/entrance nodes here.
             } else if node.tags.get("natural").map(String::as_str) == Some("tree") {
                 natural::generate_natural(
                     editor,
@@ -390,6 +392,7 @@ fn process_element(
                     xzbbox,
                     building_passages,
                     road_mask,
+                    path_mask,
                 );
             } else if rel.tags.contains_key("water")
                 || rel

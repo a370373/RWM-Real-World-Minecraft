@@ -800,8 +800,8 @@ impl BuildingStylePreset {
             use_accent_lines: Some(false),
             use_vertical_accent: Some(false),
             use_accent_roof_line: Some(false),
-            has_windows: Some(false),    // No windows on sheds
-            has_single_door: Some(true), // One door somewhere
+            has_windows: Some(false),     // No windows on sheds
+            has_single_door: Some(false), // One door somewhere
             wall_depth_style: Some(WallDepthStyle::None),
             ..Default::default()
         }
@@ -818,8 +818,8 @@ impl BuildingStylePreset {
             use_accent_roof_line: Some(false),
             roof_type: Some(RoofType::Flat),
             generate_roof: Some(true),
-            has_windows: Some(false),    // The walls themselves are glass
-            has_single_door: Some(true), // One entrance door
+            has_windows: Some(false),     // The walls themselves are glass
+            has_single_door: Some(false), // One entrance door
             wall_depth_style: Some(WallDepthStyle::None),
             ..Default::default()
         }
@@ -2218,7 +2218,6 @@ fn generate_special_doors(
         return;
     }
 
-    let mut rng = element_rng(element.id);
     let door_y = config.start_y_offset + config.abs_terrain_offset + 1;
 
     if config.has_garage_door {
@@ -2290,27 +2289,6 @@ fn generate_special_doors(
                 );
 
                 break; // Only place one set of garage doors
-            }
-        }
-    } else if config.has_single_door {
-        // Place a single oak door somewhere on the wall
-        // Pick a random position from the wall outline
-        if !wall_outline.is_empty() {
-            let door_idx = rng.random_range(0..wall_outline.len());
-            let (door_x, door_z) = wall_outline[door_idx];
-
-            // Skip placing a door inside a building passage
-            if !building_passages.contains(door_x, door_z) {
-                // Place single oak door (empty blacklist to overwrite wall blocks)
-                editor.set_block_absolute(OAK_DOOR, door_x, door_y, door_z, None, Some(&[]));
-                editor.set_block_absolute(
-                    OAK_DOOR_UPPER,
-                    door_x,
-                    door_y + 1,
-                    door_z,
-                    None,
-                    Some(&[]),
-                );
             }
         }
     }
@@ -4787,6 +4765,33 @@ fn qualifies_for_auto_gabled_roof(building_type: &str) -> bool {
 // ============================================================================
 
 #[inline]
+
+/// Calculate Manhattan distance from a building coordinate to the existing
+/// reconstructed path mask.
+///
+/// READ-ONLY: this only queries the existing PathMaskBitmap and never
+/// creates, moves, removes, or modifies path geometry.
+fn nearest_path_distance(
+    x: i32,
+    z: i32,
+    path_mask: &crate::floodfill_cache::PathMaskBitmap,
+    max_radius: i32,
+) -> Option<i32> {
+    for radius in 0..=max_radius {
+        for dx in -radius..=radius {
+            let dz = radius - dx.abs();
+
+            if path_mask.contains(x + dx, z + dz)
+                || (dz != 0 && path_mask.contains(x + dx, z - dz))
+            {
+                return Some(radius);
+            }
+        }
+    }
+
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn generate_buildings(
     editor: &mut WorldEditor,
@@ -4797,6 +4802,7 @@ pub fn generate_buildings(
     flood_fill_cache: &FloodFillCache,
     building_passages: &CoordinateBitmap,
     road_mask: &crate::floodfill_cache::RoadMaskBitmap,
+    path_mask: &crate::floodfill_cache::PathMaskBitmap,
     group_seed: u64,
 ) {
     // Early return for underground buildings
@@ -5143,10 +5149,8 @@ pub fn generate_buildings(
         }
     }
 
-    // Generate special doors (garage doors, shed doors)
-    if config.has_garage_door || config.has_single_door {
-        generate_special_doors(editor, element, &config, &wall_outline, effective_passages);
-    }
+    // Door generation is owned by Building Intelligence.
+    // Do not materialize legacy/random special doors here.
 
     // Per-building window frame dressing, then shutters/window boxes for the rest
     if !element.tags.contains_key("building:part") {
@@ -5258,7 +5262,14 @@ pub fn generate_buildings(
                     floors: floor_levels.len(),
                     nearby_road_distance: None,
                     nearby_road_position: None,
-                    nearby_path_distance: None,
+                    nearby_path_distance: {
+                        cached_floor_area
+                            .iter()
+                            .filter_map(|&(x, z)| {
+                                nearest_path_distance(x, z, path_mask, 32)
+                            })
+                            .min()
+                    },
                     nearby_parking_distance: None,
                     environment: BuildingEnvironment::Unknown,
                 };
@@ -5346,49 +5357,41 @@ pub fn generate_buildings(
         // Exterior-context extraction will be connected separately.
         nearby_road_distance,
         nearby_road_position,
-        nearby_path_distance: None,
+        nearby_path_distance: {
+            cached_floor_area
+                .iter()
+                .filter_map(|&(x, z)| {
+                    nearest_path_distance(x, z, path_mask, 32)
+                })
+                .min()
+        },
         nearby_parking_distance: None,
     };
 
-                let planned_building =
-                    build_floor_plan(building_context, &building_snapshot, &element.nodes);
+                let planned_building = build_floor_plan(
+                    building_context,
+                    &building_snapshot,
+                    &element.nodes,
+                    start_y_offset,
+                );
 
-                if planned_building.has_floor_plan() {
-                    generate_intelligent_building_interior(
-                        editor,
-                        &planned_building,
-                        &cached_floor_area,
-                        bounds.min_x,
-                        bounds.min_z,
-                        bounds.max_x,
-                        bounds.max_z,
-                        start_y_offset,
-                        effective_building_height,
-                        style.wall_block,
-                        &floor_levels,
-                        abs_terrain_offset,
-                        is_abandoned_building,
-                        effective_passages,
-                        has_sloped_roof,
-                    );
-                } else {
-                    generate_building_interior(
-                        editor,
-                        &cached_floor_area,
-                        bounds.min_x,
-                        bounds.min_z,
-                        bounds.max_x,
-                        bounds.max_z,
-                        start_y_offset,
-                        effective_building_height,
-                        style.wall_block,
-                        &floor_levels,
-                        abs_terrain_offset,
-                        is_abandoned_building,
-                        effective_passages,
-                        has_sloped_roof,
-                    );
-                }
+                generate_intelligent_building_interior(
+                    editor,
+                    &planned_building,
+                    &cached_floor_area,
+                    bounds.min_x,
+                    bounds.min_z,
+                    bounds.max_x,
+                    bounds.max_z,
+                    start_y_offset,
+                    effective_building_height,
+                    style.wall_block,
+                    &floor_levels,
+                    abs_terrain_offset,
+                    is_abandoned_building,
+                    effective_passages,
+                    has_sloped_roof,
+                );
             }
         }
     }
@@ -8085,6 +8088,7 @@ pub fn generate_building_from_relation(
     xzbbox: &crate::coordinate_system::cartesian::XZBBox,
     building_passages: &CoordinateBitmap,
     road_mask: &crate::floodfill_cache::RoadMaskBitmap,
+    path_mask: &crate::floodfill_cache::PathMaskBitmap,
 ) {
     // Skip underground buildings/building parts
     if is_underground_building(&relation.tags) {
@@ -8278,6 +8282,7 @@ pub fn generate_building_from_relation(
                 flood_fill_cache,
                 building_passages,
                 road_mask,
+                path_mask,
                 merged_way.id,
             );
         }
