@@ -160,6 +160,85 @@ impl SpatialConstraints {
         // EXISTING REAL-WORLD WINDOWS / DAYLIGHT
         // -----------------------------------------------------
         //
+        // Windows are immutable evidence from the reconstructed
+        // real-world building shell.
+        //
+        // Interior Intelligence may READ:
+        //   - mapped position
+        //   - width / height
+        //   - facade orientation
+        //
+        // It MUST NOT:
+        //   - create windows
+        //   - move windows
+        //   - resize windows
+        //   - remove windows
+        //
+        // This score only decides which proposed room is more
+        // compatible with already-existing daylight evidence.
+
+        let existing_windows = self
+            .windows
+            .iter()
+            .filter(|window| window.floor == floor && point_touches_rect(room, window.x, window.z))
+            .collect::<Vec<_>>();
+
+        let windows = existing_windows.len();
+
+        let window_area: i32 = existing_windows
+            .iter()
+            .map(|window| window.width.max(0) * window.height.max(0))
+            .sum();
+
+        let facing_diversity = existing_windows
+            .iter()
+            .filter(|window| window.facing <= 3)
+            .map(|window| window.facing)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+
+        let mut daylight_score = 0i32;
+
+        if windows > 0 {
+            // A mapped real-world window is strong daylight evidence.
+            daylight_score += 20;
+
+            // Larger existing openings provide stronger evidence.
+            daylight_score += (window_area / 4).min(20);
+
+            // Known facade orientation adds a small confidence bonus.
+            daylight_score += (facing_diversity as i32).min(4) * 2;
+
+            // Multiple mapped windows strengthen the room's
+            // daylight suitability.
+            daylight_score += ((windows as i32) - 1).min(4) * 3;
+        }
+
+        // Semantic daylight preference.
+        //
+        // Rooms that normally benefit from daylight receive the
+        // evidence only when real-world windows actually exist.
+        if prefers_daylight(allocation.room_type) {
+            if windows > 0 {
+                daylight_score += 15;
+            } else {
+                daylight_score -= 8;
+            }
+        } else if windows > 0 {
+            // Non-daylight-critical rooms may still contain windows,
+            // but they receive a smaller benefit.
+            daylight_score += 4;
+        }
+
+        score += daylight_score;
+
+        println!(
+            "[BI DAYLIGHT] floor={} room={:?} windows={} area={} facing={} score={}",
+            floor, allocation.room_type, windows, window_area, facing_diversity, daylight_score
+        );
+
+        // -----------------------------------------------------
+        //
         // Windows are READ-ONLY geometry from the already
         // reconstructed building shell.
         //

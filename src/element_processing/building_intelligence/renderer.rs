@@ -5,6 +5,7 @@ use crate::element_processing::building_intelligence::vertical::{
     render_vertical_access, VerticalAccessEditor,
 };
 use crate::element_processing::building_intelligence::FurnitureKind;
+use crate::element_processing::building_intelligence::room_loot::generate_room_loot;
 use crate::element_processing::building_intelligence::PlannedBuilding;
 use crate::element_processing::subprocessor::buildings_interior::generate_building_interior;
 use crate::element_processing::subprocessor::interior::{FloorPlan, RoomType};
@@ -52,6 +53,15 @@ impl<'a, 'b> VerticalAccessEditor for WorldEditorVerticalAdapter<'a, 'b> {
         self.editor
             .set_block_with_properties_absolute(block, x, y, z, None, None);
     }
+
+    fn clear_block(&mut self, x: i32, y: i32, z: i32) {
+        self.editor
+            .set_block_absolute(AIR, x, y, z, None, Some(&[]));
+    }
+
+    fn block_at(&self, x: i32, y: i32, z: i32) -> Option<Block> {
+        self.editor.get_block_absolute(x, y, z)
+    }
 }
 
 /// ---------------------------------------------------------
@@ -97,47 +107,120 @@ fn cached_floor_area_to_vec(
 /// origin. It does not modify the building footprint or geographic bounds.
 fn furniture_blocks(kind: FurnitureKind) -> &'static [(Block, i32, i32, i32)] {
     match kind {
-        FurnitureKind::Bed => &[(RED_BED_NORTH_HEAD, 0, 0, 0), (RED_BED_NORTH_FOOT, 1, 0, 0)],
+        // 2 x 3 semantic footprint.
+        FurnitureKind::Bed => &[
+            (RED_BED_NORTH_HEAD, 0, 0, 0),
+            (RED_BED_NORTH_FOOT, 1, 0, 0),
+            (RED_BED_NORTH_HEAD, 0, 0, 1),
+            (RED_BED_NORTH_FOOT, 1, 0, 1),
+            (RED_BED_NORTH_HEAD, 0, 0, 2),
+            (RED_BED_NORTH_FOOT, 1, 0, 2),
+        ],
 
+        // 2 x 1.
         FurnitureKind::Sofa => &[(OAK_STAIRS, 0, 0, 0), (OAK_STAIRS, 1, 0, 0)],
 
-        FurnitureKind::Table => &[(OAK_FENCE, 0, 0, 0), (OAK_SLAB_TOP, 0, 1, 0)],
+        // 2 x 2.
+        FurnitureKind::Table => &[
+            (OAK_FENCE, 0, 0, 0),
+            (OAK_FENCE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
+        // 1 x 1.
         FurnitureKind::Chair => &[(OAK_STAIRS, 0, 0, 0)],
 
+        // 2 x 1.
         FurnitureKind::KitchenCounter => &[(CRAFTING_TABLE, 0, 0, 0), (CRAFTING_TABLE, 1, 0, 0)],
 
+        // 1 x 1.
         FurnitureKind::Sink => &[(CAULDRON, 0, 0, 0)],
 
+        // 1 x 1.
         FurnitureKind::Toilet => &[(CAULDRON, 0, 0, 0)],
 
+        // 1 x 1.
         FurnitureKind::Shower => &[(CAULDRON, 0, 0, 0)],
 
+        // 2 x 1.
         FurnitureKind::Bathtub => &[(CAULDRON, 0, 0, 0), (CAULDRON, 1, 0, 0)],
 
-        FurnitureKind::Desk => &[(OAK_FENCE, 0, 0, 0), (OAK_SLAB_TOP, 0, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::Desk => &[
+            (OAK_FENCE, 0, 0, 0),
+            (OAK_FENCE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
-        FurnitureKind::Bookshelf => &[(BOOKSHELF, 0, 0, 0), (BOOKSHELF, 0, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::Bookshelf => &[
+            (BOOKSHELF, 0, 0, 0),
+            (BOOKSHELF, 1, 0, 0),
+            (BOOKSHELF, 0, 1, 0),
+            (BOOKSHELF, 1, 1, 0),
+        ],
 
-        FurnitureKind::Checkout => &[(CRAFTING_TABLE, 0, 0, 0), (OAK_SLAB_TOP, 1, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::Checkout => &[
+            (CRAFTING_TABLE, 0, 0, 0),
+            (CRAFTING_TABLE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
-        FurnitureKind::Shelf => &[(OAK_FENCE, 0, 0, 0), (OAK_SLAB_TOP, 0, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::Shelf => &[
+            (OAK_FENCE, 0, 0, 0),
+            (OAK_FENCE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
-        FurnitureKind::HospitalBed => {
-            &[(RED_BED_NORTH_HEAD, 0, 0, 0), (RED_BED_NORTH_FOOT, 1, 0, 0)]
-        }
+        // 2 x 3 semantic footprint.
+        FurnitureKind::HospitalBed => &[
+            (RED_BED_NORTH_HEAD, 0, 0, 0),
+            (RED_BED_NORTH_FOOT, 1, 0, 0),
+            (RED_BED_NORTH_HEAD, 0, 0, 1),
+            (RED_BED_NORTH_FOOT, 1, 0, 1),
+            (RED_BED_NORTH_HEAD, 0, 0, 2),
+            (RED_BED_NORTH_FOOT, 1, 0, 2),
+        ],
 
-        FurnitureKind::MedicalDesk => &[(OAK_FENCE, 0, 0, 0), (OAK_SLAB_TOP, 0, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::MedicalDesk => &[
+            (OAK_FENCE, 0, 0, 0),
+            (OAK_FENCE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
-        FurnitureKind::ClassroomDesk => &[(OAK_FENCE, 0, 0, 0), (OAK_SLAB_TOP, 0, 1, 0)],
+        // 2 x 1.
+        FurnitureKind::ClassroomDesk => &[
+            (OAK_FENCE, 0, 0, 0),
+            (OAK_FENCE, 1, 0, 0),
+            (OAK_SLAB_TOP, 0, 1, 0),
+            (OAK_SLAB_TOP, 1, 1, 0),
+        ],
 
+        // 1 x 1.
         FurnitureKind::StorageShelf => &[(BARREL, 0, 0, 0), (BARREL, 0, 1, 0)],
 
+        // 3 x 2.
         FurnitureKind::DiningTable => &[
             (OAK_FENCE, 0, 0, 0),
-            (OAK_SLAB_TOP, 0, 1, 0),
             (OAK_FENCE, 1, 0, 0),
+            (OAK_FENCE, 2, 0, 0),
+            (OAK_FENCE, 0, 0, 1),
+            (OAK_FENCE, 1, 0, 1),
+            (OAK_FENCE, 2, 0, 1),
+            (OAK_SLAB_TOP, 0, 1, 0),
             (OAK_SLAB_TOP, 1, 1, 0),
+            (OAK_SLAB_TOP, 2, 1, 0),
+            (OAK_SLAB_TOP, 0, 1, 1),
+            (OAK_SLAB_TOP, 1, 1, 1),
+            (OAK_SLAB_TOP, 2, 1, 1),
         ],
     }
 }
@@ -405,6 +488,40 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
                 floor_y
             );
             // -------------------------------------------------
+            // Interior clearance
+            // -------------------------------------------------
+            //
+            // HARD PHYSICAL RULE:
+            //
+            // The Room interior volume must remain AIR.
+            //
+            // Room floor:
+            //     floor_y
+            //
+            // Room interior:
+            //     floor_y + 1
+            //     floor_y + 2
+            //     floor_y + 3
+            //
+            // Top physical floor ceiling:
+            //     floor_y + 4
+            //
+            // Only cells already belonging to the authoritative
+            // cached_floor_area may be cleared.
+            // -------------------------------------------------
+            for &(x, z) in &interior_cells {
+                if !cached_floor_area_set.contains(&(x, z)) {
+                    continue;
+                }
+
+                editor.set_block_absolute(AIR, x, floor_y + 1, z, None, Some(&[]));
+
+                editor.set_block_absolute(AIR, x, floor_y + 2, z, None, Some(&[]));
+
+                editor.set_block_absolute(AIR, x, floor_y + 3, z, None, Some(&[]));
+            }
+
+            // -------------------------------------------------
             // Room floor
             // -------------------------------------------------
             //
@@ -513,22 +630,29 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
             }
 
             // -------------------------------------------------
-            // Interior clearance
+            // Room loot / container materialization
             // -------------------------------------------------
             //
-            // The room volume itself must remain AIR.
+            // HARD RULES:
+            // - Uses the already-materialized physical room cells.
+            // - Never expands the real building footprint.
+            // - RoomPlan remains semantic.
+            // - cached_floor_area remains authoritative.
+            // - Placement and loot selection are delegated to
+            //   room_loot.rs.
             //
-            // We do NOT fill:
-            //   floor_y + 1
-            //   floor_y + 2
-            //   floor_y + 3
+            // The existing Room Loot system handles:
+            //   RoomType -> loot pool -> items -> chest NBT.
             //
-            // with wall blocks.
-            //
-            // Existing furniture / geometry is intentionally
-            // preserved here. The circulation renderer later
-            // handles walkable clearance for approved paths.
             // -------------------------------------------------
+            let room_type_debug = format!("{:?}", room.room_type);
+
+            let _ = generate_room_loot(
+                editor,
+                &room_type_debug,
+                &interior_cells,
+                floor_y,
+            );
         }
     }
 
@@ -570,37 +694,34 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
             };
 
             let floor_y = floor_levels.first().copied().unwrap_or(start_y_offset);
-
             let door_y = floor_y + 1;
             let width = main_door.width.max(1);
 
-            // -----------------------------------------------------
-            // Safety bounds.
+            // -------------------------------------------------
+            // HARD BOUNDARY
+            // -------------------------------------------------
             //
-            // The entrance may modify the existing building wall,
-            // but it may NEVER escape the renderer's existing
-            // building bounds.
-            // -----------------------------------------------------
+            // The real-world entrance coordinate is authoritative.
+            // Never move it and never expand the building.
+            //
+            // The exterior opening may touch the reconstructed
+            // building wall, but every interior clearing operation
+            // MUST remain inside cached_floor_area.
+            //
+            // -------------------------------------------------
+
             if x < min_x || x > max_x || z < min_z || z > max_z {
                 println!(
-                    "[BI MAIN DOOR] SKIP outside existing building bounds: ({}, {})",
+                    "[BI MAIN DOOR] SKIP outside building bounds: ({}, {})",
                     x, z
                 );
             } else {
                 let half = width / 2;
 
                 // -------------------------------------------------
-                // Open the exact authoritative entrance anchor.
-                //
-                // North/South:
-                //   width extends along X.
-                //
-                // East/West:
-                //   width extends along Z.
-                //
-                // Only the doorway opening itself is modified.
-                // No surrounding exterior geometry is touched.
+                // 1. Open the existing exterior wall
                 // -------------------------------------------------
+
                 match side {
                     crate::element_processing::building_intelligence::EntranceSide::North
                     | crate::element_processing::building_intelligence::EntranceSide::South => {
@@ -634,12 +755,56 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
                 }
 
                 // -------------------------------------------------
-                // Materialize the actual entrance door.
+                // 2. Clear the FIRST interior cell
                 //
-                // Use the SAME authoritative anchor used for the
-                // opening. Never reconstruct the door position from
-                // the building bounding box.
+                // This is the physical connection:
+                //
+                // exterior door
+                //       ↓
+                // interior entrance cell
+                //
+                // Only cached_floor_area may be cleared.
                 // -------------------------------------------------
+
+                let interior = match side {
+                    crate::element_processing::building_intelligence::EntranceSide::North => {
+                        (x, z + 1)
+                    }
+
+                    crate::element_processing::building_intelligence::EntranceSide::South => {
+                        (x, z - 1)
+                    }
+
+                    crate::element_processing::building_intelligence::EntranceSide::East => {
+                        (x - 1, z)
+                    }
+
+                    crate::element_processing::building_intelligence::EntranceSide::West => {
+                        (x + 1, z)
+                    }
+                };
+
+                if cached_floor_area_set.contains(&interior) {
+                    for y in door_y..=(door_y + 1) {
+                        editor.set_block_absolute(AIR, interior.0, y, interior.1, None, Some(&[]));
+                    }
+
+                    println!(
+                        "[BI MAIN DOOR] CONNECTED exterior=({}, {}) interior=({}, {}) side={:?}",
+                        x, z, interior.0, interior.1, side
+                    );
+                } else {
+                    println!(
+                        "[BI MAIN DOOR] INTERIOR CONNECTION SKIP outside cached_floor_area: ({}, {})",
+                        interior.0,
+                        interior.1
+                    );
+                }
+
+                // -------------------------------------------------
+                // 3. Materialize the actual door
+                // -------------------------------------------------
+
                 let lower = interior_door_block_with_state(orientation, false, false, false);
 
                 let upper = interior_door_block_with_state(orientation, true, false, false);
@@ -1042,8 +1207,7 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
         else {
             println!(
                 "[BI FURNITURE] SKIP invalid room ownership: room_id={} kind={:?}",
-                furniture.room_id,
-                furniture.kind
+                furniture.room_id, furniture.kind
             );
             continue;
         };
@@ -1053,14 +1217,10 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
         // -----------------------------------------------------
         let floor_index = room_node.floor;
 
-        let Some(floor_plan) = planned_building
-            .floor_plans
-            .get(floor_index)
-        else {
+        let Some(floor_plan) = planned_building.floor_plans.get(floor_index) else {
             println!(
                 "[BI FURNITURE] SKIP invalid floor ownership: room_id={} floor={}",
-                furniture.room_id,
-                floor_index
+                furniture.room_id, floor_index
             );
             continue;
         };
@@ -1068,15 +1228,10 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
         // -----------------------------------------------------
         // 3. Resolve the concrete Room
         // -----------------------------------------------------
-        let Some(room) = floor_plan
-            .rooms
-            .get(room_node.floor_room_index)
-        else {
+        let Some(room) = floor_plan.rooms.get(room_node.floor_room_index) else {
             println!(
                 "[BI FURNITURE] SKIP invalid room index: room_id={} floor={} floor_room_index={}",
-                furniture.room_id,
-                floor_index,
-                room_node.floor_room_index
+                furniture.room_id, floor_index, room_node.floor_room_index
             );
             continue;
         };
@@ -1214,6 +1369,9 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
 
         // Keep every light strictly inside the original
         // real-world building footprint.
+        if !cached_floor_area.contains(&(light.x, light.z)) {
+            continue;
+        }
         if light.x < min_x || light.x > max_x || light.z < min_z || light.z > max_z {
             continue;
         }
@@ -1270,16 +1428,13 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
     let cached_floor_area_set: std::collections::HashSet<(i32, i32)> =
         cached_floor_area.iter().copied().collect();
 
-    let vertical_plans =
-        planned_building.circulation.vertical_access_plans();
+    let vertical_plans = planned_building.circulation.vertical_access_plans();
 
     for plan in vertical_plans {
         let footprint = plan.footprint_cells();
 
         if footprint.is_empty() {
-            eprintln!(
-                "[BI VERTICAL] REJECT: empty vertical-access footprint"
-            );
+            eprintln!("[BI VERTICAL] REJECT: empty vertical-access footprint");
             continue;
         }
 
@@ -1290,8 +1445,7 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
         if let Some(&(x, z)) = outside_cell {
             eprintln!(
                 "[BI VERTICAL] REJECT: footprint outside cached_floor_area at ({}, {})",
-                x,
-                z
+                x, z
             );
             continue;
         }

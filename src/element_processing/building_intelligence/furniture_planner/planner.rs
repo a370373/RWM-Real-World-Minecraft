@@ -61,13 +61,7 @@ impl FurniturePlanner {
             //        -> FloorPlan.rooms[floor_room_index]
             //
             // Never use RoomType or local room ordering as ownership.
-            self.plan_room(
-                room_node.id,
-                room,
-                constraints,
-                floor,
-                &mut furniture,
-            );
+            self.plan_room(room_node.id, room, constraints, floor, &mut furniture);
         }
 
         eprintln!(
@@ -106,31 +100,24 @@ impl FurniturePlanner {
 
 fn furniture_size(kind: FurnitureKind) -> (i32, i32) {
     match kind {
-        FurnitureKind::Bed => (2, 3),
-        FurnitureKind::Sofa => (3, 1),
-        FurnitureKind::Table => (2, 2),
+        FurnitureKind::Bed => (2, 1),
+        FurnitureKind::Sofa => (2, 1),
+        FurnitureKind::Table => (1, 1),
         FurnitureKind::Chair => (1, 1),
-
-        FurnitureKind::KitchenCounter => (3, 1),
+        FurnitureKind::KitchenCounter => (2, 1),
         FurnitureKind::Sink => (1, 1),
-
         FurnitureKind::Toilet => (1, 1),
-        FurnitureKind::Shower => (2, 2),
-        FurnitureKind::Bathtub => (2, 2),
-
-        FurnitureKind::Desk => (2, 1),
-        FurnitureKind::Bookshelf => (2, 1),
-
+        FurnitureKind::Shower => (1, 1),
+        FurnitureKind::Bathtub => (2, 1),
+        FurnitureKind::Desk => (1, 1),
+        FurnitureKind::Bookshelf => (1, 1),
         FurnitureKind::Checkout => (2, 1),
-        FurnitureKind::Shelf => (2, 1),
-
-        FurnitureKind::HospitalBed => (2, 3),
-        FurnitureKind::MedicalDesk => (2, 1),
-
-        FurnitureKind::ClassroomDesk => (2, 1),
-        FurnitureKind::StorageShelf => (2, 1),
-
-        FurnitureKind::DiningTable => (3, 2),
+        FurnitureKind::Shelf => (1, 1),
+        FurnitureKind::HospitalBed => (2, 1),
+        FurnitureKind::MedicalDesk => (1, 1),
+        FurnitureKind::ClassroomDesk => (1, 1),
+        FurnitureKind::StorageShelf => (1, 1),
+        FurnitureKind::DiningTable => (2, 2),
     }
 }
 

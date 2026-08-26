@@ -1,3 +1,4 @@
+pub mod room_loot;
 pub mod circulation;
 pub mod furniture_planner;
 pub mod input;

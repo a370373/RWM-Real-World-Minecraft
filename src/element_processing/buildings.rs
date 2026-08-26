@@ -4781,8 +4781,7 @@ fn nearest_path_distance(
         for dx in -radius..=radius {
             let dz = radius - dx.abs();
 
-            if path_mask.contains(x + dx, z + dz)
-                || (dz != 0 && path_mask.contains(x + dx, z - dz))
+            if path_mask.contains(x + dx, z + dz) || (dz != 0 && path_mask.contains(x + dx, z - dz))
             {
                 return Some(radius);
             }
@@ -5265,9 +5264,7 @@ pub fn generate_buildings(
                     nearby_path_distance: {
                         cached_floor_area
                             .iter()
-                            .filter_map(|&(x, z)| {
-                                nearest_path_distance(x, z, path_mask, 32)
-                            })
+                            .filter_map(|&(x, z)| nearest_path_distance(x, z, path_mask, 32))
                             .min()
                     },
                     nearby_parking_distance: None,
@@ -5373,6 +5370,7 @@ pub fn generate_buildings(
                     &building_snapshot,
                     &element.nodes,
                     start_y_offset,
+                    &cached_floor_area,
                 );
 
                 generate_intelligent_building_interior(

@@ -205,17 +205,54 @@ fn fallback_unknown(profile: &BuildingProfile) -> RoomAllocationPlan {
     }
 
     let mut rooms = Vec::new();
+    let area = profile.area();
 
-    rooms.push(RoomAllocation {
-        room_type: RoomType::Corridor,
-        required_area: profile.area().min(16),
-        min_width: 2,
-        min_depth: 2,
-        preferred_floor: Some(0),
-        daylight_required: false,
-        priority: 5,
-        entrance_preferred: false,
-    });
+    // Simple residential-style fallback.
+    // This is intentionally low-intelligence: when the building
+    // type cannot be inferred, create a few plausible rooms rather
+    // than turning the entire floor into one giant corridor.
+    //
+    // Geometry remains fully constrained by the existing floor-plan
+    // solver and cached_floor_area pipeline.
+
+    if area >= 16 {
+        rooms.push(RoomAllocation {
+            room_type: RoomType::Bedroom,
+            required_area: (area / 3).max(9).min(36),
+            min_width: 3,
+            min_depth: 3,
+            preferred_floor: Some(0),
+            daylight_required: false,
+            priority: 5,
+            entrance_preferred: false,
+        });
+    }
+
+    if area >= 30 {
+        rooms.push(RoomAllocation {
+            room_type: RoomType::LivingRoom,
+            required_area: (area / 3).max(12).min(49),
+            min_width: 3,
+            min_depth: 3,
+            preferred_floor: Some(0),
+            daylight_required: false,
+            priority: 4,
+            entrance_preferred: true,
+        });
+    }
+
+    if area >= 60 {
+        rooms.push(RoomAllocation {
+            room_type: RoomType::Kitchen,
+            required_area: (area / 6).max(9).min(25),
+            min_width: 3,
+            min_depth: 3,
+            preferred_floor: Some(0),
+            daylight_required: false,
+            priority: 3,
+            entrance_preferred: false,
+        });
+    }
 
     RoomAllocationPlan { rooms }
 }

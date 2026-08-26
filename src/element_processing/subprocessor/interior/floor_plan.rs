@@ -160,13 +160,8 @@ impl FloorPlan {
         // topology by sharing a real wall boundary with at least
         // one other room.
         //
-        // Corner-only contact does NOT count as adjacency.
-        //
-        // This validates the semantic room topology only. It does
-        // not modify the reconstructed building geometry.
-        if !self.is_topology_valid() {
-            return false;
-        }
+        // Topology is a quality signal, not a hard FloorPlan rejection.
+        // A partially valid semantic plan must remain renderable.
 
         // Partial-success policy:
         // A valid floor plan does not require every footprint block to be
@@ -199,7 +194,7 @@ pub fn generate_floor_plan(bounds: Rect, rooms: &[(RoomType, i32)]) -> Option<Fl
             bounds,
         });
 
-        return Some(plan);
+        return plan.is_valid().then_some(plan);
     }
 
     let split_vertical = bounds.width() >= bounds.depth();
@@ -299,24 +294,22 @@ pub fn generate_floor_plan(bounds: Rect, rooms: &[(RoomType, i32)]) -> Option<Fl
     // A failed semantic room allocation must never discard the
     // successfully generated interior layout.
     //
-    // Any unresolved footprint is converted into a neutral Corridor
-    // so the FloorPlan remains spatially complete and downstream
-    // Doorway / RoomGraph / Vertical Access systems still receive
-    // a valid plan.
+    // Unresolved space is intentionally NOT converted into Corridor.
+    // Corridor is a semantic room type and must only exist when the
+    // building profile explicitly requests circulation space.
+    //
+    // Leaving an unresolved fragment empty is safer than inventing
+    // semantic room geometry. The existing reconstructed building
+    // shell remains authoritative.
     if remaining.area() > 0 {
-        if remaining.can_fit(2, 2) {
-            plan.rooms.push(Room {
-                room_type: RoomType::Corridor,
-                bounds: remaining,
-            });
-        } else {
-            // Tiny unresolved fragments are intentionally absorbed
-            // by the existing valid room layout rather than causing
-            // the whole building interior to fail.
-        }
+        // Intentionally leave unresolved fragments untouched.
+        //
+        // The renderer and downstream topology systems operate only
+        // on authoritative Room entries. No synthetic Corridor is
+        // created here.
     }
 
-    Some(plan)
+    plan.is_valid().then_some(plan)
 }
 
 /// Spatial-aware floor-plan generation.
@@ -343,8 +336,32 @@ pub fn generate_floor_plan_with_constraints(
     allocations: &[RoomAllocation],
     constraints: &SpatialConstraints,
     floor: i32,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
 ) -> Option<FloorPlan> {
-    generate_spatial_floor_plan(bounds, allocations, constraints, floor)
+    generate_spatial_floor_plan(bounds, allocations, constraints, floor, cached_floor_area)
+}
+
+/// Returns true only when EVERY X/Z cell covered by `room`
+/// exists in the authoritative reconstructed interior.
+///
+/// IMPORTANT:
+/// - `Rect` is only a candidate geometric region.
+/// - `cached_floor_area` is the physical authority.
+/// - No cell may be invented.
+/// - No expansion or modification of cached_floor_area occurs.
+fn room_inside_cached_floor_area(
+    room: Rect,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
+) -> bool {
+    for x in room.min_x..=room.max_x {
+        for z in room.min_z..=room.max_z {
+            if !cached_floor_area.contains(&(x, z)) {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 pub fn generate_spatial_floor_plan(
@@ -352,6 +369,7 @@ pub fn generate_spatial_floor_plan(
     allocations: &[RoomAllocation],
     constraints: &SpatialConstraints,
     floor: i32,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
 ) -> Option<FloorPlan> {
     // =========================================================
     // STRICT INTERIOR BOUNDARY
@@ -383,7 +401,39 @@ pub fn generate_spatial_floor_plan(
         return None;
     }
 
+    // =========================================================
+    // HARD MASK VALIDATION
+    // =========================================================
+    //
+    // The candidate interior Rect itself must be completely
+    // backed by the reconstructed real-world floor footprint.
+    //
+    // If even ONE cell is outside cached_floor_area, the
+    // candidate interior is invalid.
+    //
+    if !room_inside_cached_floor_area(interior, cached_floor_area) {
+        println!("[BI FLOOR PLAN] REJECT: candidate interior exceeds cached_floor_area");
+        return None;
+    }
+
     if allocations.is_empty() {
+        return None;
+    }
+
+    // =========================================================
+    // AUTHORITATIVE REAL-WORLD INTERIOR FOOTPRINT
+    // =========================================================
+    //
+    // cached_floor_area is produced by the existing real-world
+    // building reconstruction engine.
+    //
+    // It is READ-ONLY.
+    //
+    // The floor planner must never invent an interior footprint
+    // when the reconstructed footprint is unavailable.
+    //
+    if cached_floor_area.is_empty() {
+        println!("[BI FLOOR PLAN] cached_floor_area is empty; refusing to generate rooms");
         return None;
     }
 
@@ -427,7 +477,9 @@ pub fn generate_spatial_floor_plan(
             let min_width = allocation.min_width.max(2);
             let min_depth = allocation.min_depth.max(2);
 
-            if remaining.can_fit(min_width, min_depth) {
+            if remaining.can_fit(min_width, min_depth)
+                && room_inside_cached_floor_area(remaining, cached_floor_area)
+            {
                 plan.rooms.push(Room {
                     room_type: allocation.room_type,
                     bounds: remaining,
@@ -460,6 +512,7 @@ pub fn generate_spatial_floor_plan(
                 && room.max_z <= interior.max_z
                 && room.width() >= allocation.min_width.max(2)
                 && room.depth() >= allocation.min_depth.max(2)
+                && room_inside_cached_floor_area(room, cached_floor_area)
             {
                 plan.rooms.push(Room {
                     room_type: allocation.room_type,
@@ -681,7 +734,7 @@ pub fn generate_spatial_floor_plan(
         plan.total_room_area()
     );
 
-    Some(plan)
+    plan.is_valid().then_some(plan)
 }
 
 #[derive(Debug, Clone, Copy)]

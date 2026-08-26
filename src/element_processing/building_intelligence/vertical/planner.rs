@@ -142,8 +142,34 @@ pub fn plan_vertical_access(
         return Vec::new();
     }
 
+    let width = width.max(1);
+
+    /*
+     * StairSize is semantic intent.
+     *
+     * The physical staircase must still span the actual world-space
+     * floor height.
+     */
+    let preferred_length = match size {
+        StairSize::Compact => 2,
+        StairSize::Small => 2,
+        StairSize::Medium => 3,
+        StairSize::Large => 4,
+        StairSize::Grand => 5,
+    };
+
     let mut plans = Vec::new();
 
+    /*
+     * =========================================================
+     * PRIMARY PATH
+     * =========================================================
+     *
+     * Prefer explicit semantic VerticalAccess connections.
+     *
+     * This is the normal path when RoomGraph successfully
+     * represents vertical circulation.
+     */
     for connection in &graph.connections {
         if connection.kind != RoomConnectionKind::VerticalAccess {
             continue;
@@ -161,141 +187,201 @@ pub fn plan_vertical_access(
             continue;
         }
 
-        let Some(from_plan) = floor_plans.get(from_room.floor) else {
-            continue;
-        };
-
-        let Some(to_plan) = floor_plans.get(to_room.floor) else {
-            continue;
-        };
-
-        let from_index = graph
-            .rooms
-            .iter()
-            .filter(|room| room.floor == from_room.floor)
-            .position(|room| room.id == from_room.id);
-
-        let to_index = graph
-            .rooms
-            .iter()
-            .filter(|room| room.floor == to_room.floor)
-            .position(|room| room.id == to_room.id);
-
-        let (Some(from_index), Some(to_index)) = (from_index, to_index) else {
-            continue;
-        };
-
-        let Some(from_bounds) = from_plan.rooms.get(from_index).map(|room| room.bounds) else {
-            continue;
-        };
-
-        let Some(to_bounds) = to_plan.rooms.get(to_index).map(|room| room.bounds) else {
-            continue;
-        };
-
-        // FloorPlan intentionally contains only X/Z geometry.
-        //
-        // IMPORTANT:
-        // Room.floor is a semantic floor index, NOT a world Y coordinate.
-        //
-        // The authoritative Minecraft Y coordinate comes from the same
-        // floor-level information already consumed by the main renderer.
-        //
-        // This keeps VerticalAccessPlanner and the physical renderer in
-        // exactly the same vertical coordinate system.
-        // Room.floor is a semantic floor index.
-        // VerticalAccessPlan requires world-space Y.
-        //
-        // The planner uses the existing building floor spacing
-        // convention here. The renderer consumes these values
-        // without changing the reconstructed building geometry.
-        let lower_y = match floor_levels.get(from_room.floor) {
-            Some(&y) => y,
-            None => continue,
-        };
-
-        let upper_y = match floor_levels.get(to_room.floor) {
-            Some(&y) => y,
-            None => continue,
-        };
-
-        if upper_y <= lower_y {
-            continue;
-        }
-
-        /*
-         * Minecraft stairs rise one block per horizontal step.
-         *
-         * Therefore the physical horizontal run must be derived
-         * from the actual world-space floor height.
-         *
-         * A vertical difference of H blocks requires H + 1
-         * stair positions so that both the lower and upper levels
-         * are represented.
-         *
-         * StairSize is still retained as semantic intent, but it
-         * may no longer shorten the physical staircase below what
-         * the actual building height requires.
-         */
-        let height = upper_y - lower_y;
-
-        if height <= 0 {
-            continue;
-        }
-
-        let preferred_length = match size {
-            StairSize::Compact => 2,
-            StairSize::Small => 2,
-            StairSize::Medium => 3,
-            StairSize::Large => 4,
-            StairSize::Grand => 5,
-        };
-
-        let length = preferred_length.max(2);
-
-        /*
-         * First determine the direction from the relationship between
-         * the two existing floor geometries.
-         *
-         * The anchor solver then uses the same direction so the
-         * physical footprint matches the renderer and validation.
-         */
-        let direction = choose_vertical_direction(from_bounds, to_bounds, width.max(1), length);
-
-        let Some((x, z)) =
-            overlapping_anchor(from_bounds, to_bounds, width.max(1), length, direction)
-        else {
-            continue;
-        };
-
-        let plan = VerticalAccessPlan {
+        let Some(plan) = build_vertical_plan_from_rooms(
+            context,
+            floor_plans,
+            floor_levels,
+            from_room.floor,
+            from_room.floor_room_index,
+            to_room.floor,
+            to_room.floor_room_index,
             kind,
             size,
-            from_floor: from_room.floor,
-            to_floor: to_room.floor,
-            x,
-            z,
-            direction,
-            width: width.max(1),
-            length,
-            lower_y,
-            upper_y,
+            width,
+            preferred_length,
+        ) else {
+            continue;
         };
 
-        if plan.is_valid(context) {
+        plans.push(plan);
+    }
+
+    /*
+     * =========================================================
+     * FALLBACK PATH
+     * =========================================================
+     *
+     * If room-layout/topology generation failed and therefore
+     * graph.connections contains no usable VerticalAccess,
+     * derive vertical-access INTENT directly from the existing
+     * FloorPlan geometry.
+     *
+     * IMPORTANT:
+     * - FloorPlan is read-only.
+     * - Rooms are never created or moved.
+     * - Building geometry is never changed.
+     * - BBox is never changed.
+     * - This only creates a VerticalAccessPlan for the renderer.
+     */
+    if plans.is_empty() {
+        for floor in 0..floor_plans.len().saturating_sub(1) {
+            let lower_plan = &floor_plans[floor];
+            let upper_plan = &floor_plans[floor + 1];
+
+            if lower_plan.rooms.is_empty() || upper_plan.rooms.is_empty() {
+                continue;
+            }
+
+            let mut best_pair: Option<(usize, usize, i32)> = None;
+
+            for (lower_index, lower_room) in lower_plan.rooms.iter().enumerate() {
+                for (upper_index, upper_room) in upper_plan.rooms.iter().enumerate() {
+                    let overlap_min_x = lower_room.bounds.min_x.max(upper_room.bounds.min_x);
+                    let overlap_max_x = lower_room.bounds.max_x.min(upper_room.bounds.max_x);
+
+                    let overlap_min_z = lower_room.bounds.min_z.max(upper_room.bounds.min_z);
+                    let overlap_max_z = lower_room.bounds.max_z.min(upper_room.bounds.max_z);
+
+                    if overlap_min_x > overlap_max_x || overlap_min_z > overlap_max_z {
+                        continue;
+                    }
+
+                    let overlap_width = overlap_max_x - overlap_min_x + 1;
+
+                    let overlap_depth = overlap_max_z - overlap_min_z + 1;
+
+                    let overlap_area = overlap_width * overlap_depth;
+
+                    if best_pair
+                        .map(|(_, _, best_area)| overlap_area > best_area)
+                        .unwrap_or(true)
+                    {
+                        best_pair = Some((lower_index, upper_index, overlap_area));
+                    }
+                }
+            }
+
+            let Some((lower_index, upper_index, _)) = best_pair else {
+                continue;
+            };
+
+            let Some(plan) = build_vertical_plan_from_rooms(
+                context,
+                floor_plans,
+                floor_levels,
+                floor,
+                lower_index,
+                floor + 1,
+                upper_index,
+                kind,
+                size,
+                width,
+                preferred_length,
+            ) else {
+                continue;
+            };
+
+            println!(
+                "[VERTICAL] FALLBACK PLAN floor {} -> {} room {} -> {} at ({}, {}) {:?}",
+                floor,
+                floor + 1,
+                lower_index,
+                upper_index,
+                plan.x,
+                plan.z,
+                plan.direction
+            );
+
             plans.push(plan);
         }
     }
 
     /*
-     * Avoid duplicate vertical structures when multiple graph
-     * connections happen to describe the same floor transition.
+     * =========================================================
+     * DEDUPLICATION
+     * =========================================================
      */
     plans.sort_by_key(|p| (p.from_floor, p.to_floor, p.x, p.z));
 
     plans.dedup_by_key(|p| (p.from_floor, p.to_floor, p.x, p.z));
 
+    println!("[VERTICAL] FINAL PLANS={}", plans.len());
+
     plans
+}
+
+fn build_vertical_plan_from_rooms(
+    context: &BuildingContext,
+    floor_plans: &[FloorPlan],
+    floor_levels: &[i32],
+    from_floor: usize,
+    from_index: usize,
+    to_floor: usize,
+    to_index: usize,
+    kind: VerticalAccessKind,
+    size: StairSize,
+    width: i32,
+    preferred_length: i32,
+) -> Option<VerticalAccessPlan> {
+    let from_plan = floor_plans.get(from_floor)?;
+    let to_plan = floor_plans.get(to_floor)?;
+
+    let from_bounds = from_plan.rooms.get(from_index)?.bounds;
+    let to_bounds = to_plan.rooms.get(to_index)?.bounds;
+
+    let lower_y = *floor_levels.get(from_floor)?;
+    let upper_y = *floor_levels.get(to_floor)?;
+
+    if upper_y <= lower_y {
+        return None;
+    }
+
+    let height = upper_y - lower_y;
+
+    /*
+     * Minecraft stairs rise one block per horizontal step.
+     *
+     * H vertical blocks therefore require at least H + 1
+     * physical stair positions.
+     */
+    /*
+     * Minecraft staircase geometry:
+     *
+     * One horizontal stair position corresponds to one
+     * vertical block of rise.
+     *
+     * Therefore a floor-to-floor height H requires exactly
+     * H + 1 physical stair positions.
+     *
+     * StairSize remains semantic intent only. It must not
+     * compress the physical staircase below the real
+     * floor-to-floor height.
+     */
+    let length = (height + 1).max(2);
+
+    let direction = choose_vertical_direction(from_bounds, to_bounds, width, length);
+
+    let (x, z) = overlapping_anchor(from_bounds, to_bounds, width, length, direction)?;
+
+    let plan = VerticalAccessPlan {
+        kind,
+        size,
+        from_floor,
+        to_floor,
+        x,
+        z,
+        direction,
+        width,
+        length,
+        lower_y,
+        upper_y,
+    };
+
+    if !plan.is_valid(context) {
+        return None;
+    }
+
+    Some(plan)
 }
 
 fn choose_vertical_direction(a: Rect, b: Rect, width: i32, length: i32) -> VerticalAccessDirection {

@@ -61,10 +61,7 @@ pub fn detect_mapped_entrance(
 
     nodes
         .iter()
-        .filter(|node| {
-            node.tags.contains_key("entrance")
-                || node.tags.contains_key("door")
-        })
+        .filter(|node| node.tags.contains_key("entrance") || node.tags.contains_key("door"))
         .map(|node| {
             let north = (node.z - min_z).abs();
             let south = (node.z - max_z).abs();

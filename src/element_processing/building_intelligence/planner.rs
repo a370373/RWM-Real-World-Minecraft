@@ -1,6 +1,6 @@
 use crate::element_processing::building_intelligence::{
     decide_building, detect_main_entrance, BuildingContext, EntranceCandidate, EntranceEvidence,
-    PlannedBuilding,
+    EntranceSide, PlannedBuilding,
 };
 
 use crate::element_processing::building_intelligence::furniture_planner::FurniturePlanner;
@@ -17,7 +17,37 @@ pub fn build_floor_plan(
     snapshot: &BuildingSnapshot,
     mapped_nodes: &[crate::osm_parser::ProcessedNode],
     start_y_offset: i32,
+    cached_floor_area: &[(i32, i32)],
 ) -> PlannedBuilding {
+    // ---------------------------------------------------------
+    // AUTHORITATIVE REAL-WORLD INTERIOR FOOTPRINT
+    // ---------------------------------------------------------
+    //
+    // cached_floor_area is produced by the existing real-world
+    // building reconstruction engine.
+    //
+    // Floor Planner may READ it, but MUST NEVER:
+    // - expand it
+    // - modify it
+    // - invent cells outside it
+    // - redefine the building footprint
+    //
+    // This is the physical hard boundary for interior planning.
+    //
+    let cached_floor_area_set: std::collections::HashSet<(i32, i32)> =
+        cached_floor_area.iter().copied().collect();
+
+    if cached_floor_area_set.is_empty() {
+        println!(
+            "[BI FLOOR PLANNER] cached_floor_area is empty; planner receives no valid interior cells"
+        );
+    } else {
+        println!(
+            "[BI FLOOR PLANNER] cached_floor_area authoritative cells={}",
+            cached_floor_area_set.len()
+        );
+    }
+
     // ---------------------------------------------------------
     // REAL-WORLD CONTEXT -> BUILDING INTELLIGENCE
     // ---------------------------------------------------------
@@ -143,68 +173,72 @@ pub fn build_floor_plan(
     //   4. parking proximity
     //   5. geometric centrality as deterministic tie-breaker
     //
-    let snapshot_door = snapshot.doors.iter().max_by(|a, b| {
-        let center_x = (context.min_x + context.max_x) / 2;
-        let center_z = (context.min_z + context.max_z) / 2;
+    let snapshot_door = snapshot
+        .doors
+        .iter()
+        .max_by(|a, b| {
+            let center_x = (context.min_x + context.max_x) / 2;
+            let center_z = (context.min_z + context.max_z) / 2;
 
-        let score = |door: &crate::element_processing::building_intelligence::input::ExistingDoor| {
-            let mut score = 0.0_f32;
+            let score =
+                |door: &crate::element_processing::building_intelligence::input::ExistingDoor| {
+                    let mut score = 0.0_f32;
 
-            // A mapped door is already real-world evidence.
-            score += 1000.0;
+                    // A mapped door is already real-world evidence.
+                    score += 1000.0;
 
-            // Prefer doors on the side with the strongest path evidence.
-            let path_distance = snapshot.nearby_path_distance.unwrap_or(i32::MAX);
-            if path_distance != i32::MAX {
-                score += (100.0 - path_distance.min(100) as f32).max(0.0);
-            }
+                    // Prefer doors on the side with the strongest path evidence.
+                    let path_distance = snapshot.nearby_path_distance.unwrap_or(i32::MAX);
+                    if path_distance != i32::MAX {
+                        score += (100.0 - path_distance.min(100) as f32).max(0.0);
+                    }
 
-            // Prefer buildings with a nearby reconstructed road.
-            let road_distance = snapshot.nearby_road_distance.unwrap_or(i32::MAX);
-            if road_distance != i32::MAX {
-                score += (60.0 - road_distance.min(60) as f32).max(0.0);
-            }
+                    // Prefer buildings with a nearby reconstructed road.
+                    let road_distance = snapshot.nearby_road_distance.unwrap_or(i32::MAX);
+                    if road_distance != i32::MAX {
+                        score += (60.0 - road_distance.min(60) as f32).max(0.0);
+                    }
 
-            // Parking is weaker evidence than pedestrian/road access.
-            let parking_distance = snapshot.nearby_parking_distance.unwrap_or(i32::MAX);
-            if parking_distance != i32::MAX {
-                score += (30.0 - parking_distance.min(30) as f32).max(0.0);
-            }
+                    // Parking is weaker evidence than pedestrian/road access.
+                    let parking_distance = snapshot.nearby_parking_distance.unwrap_or(i32::MAX);
+                    if parking_distance != i32::MAX {
+                        score += (30.0 - parking_distance.min(30) as f32).max(0.0);
+                    }
 
-            // Deterministic geometric tie-breaker:
-            // prefer a mapped door closer to the building center.
-            let dx = (door.x - center_x).abs() as f32;
-            let dz = (door.z - center_z).abs() as f32;
-            let distance = dx + dz;
-            score += (20.0 - distance.min(20.0)).max(0.0);
+                    // Deterministic geometric tie-breaker:
+                    // prefer a mapped door closer to the building center.
+                    let dx = (door.x - center_x).abs() as f32;
+                    let dz = (door.z - center_z).abs() as f32;
+                    let distance = dx + dz;
+                    score += (20.0 - distance.min(20.0)).max(0.0);
 
-            score
-        };
+                    score
+                };
 
-        score(a)
-            .partial_cmp(&score(b))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    })
-    .map(|door| {
-        EntranceCandidate::new(
-            match door.side {
-                crate::element_processing::building_intelligence::input::WindowSide::North => {
-                    crate::element_processing::building_intelligence::EntranceSide::North
-                }
-                crate::element_processing::building_intelligence::input::WindowSide::South => {
-                    crate::element_processing::building_intelligence::EntranceSide::South
-                }
-                crate::element_processing::building_intelligence::input::WindowSide::East => {
-                    crate::element_processing::building_intelligence::EntranceSide::East
-                }
-                crate::element_processing::building_intelligence::input::WindowSide::West => {
-                    crate::element_processing::building_intelligence::EntranceSide::West
-                }
-            },
-            door.x,
-            door.z,
-        )
-    });
+            score(a)
+                .partial_cmp(&score(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|door| {
+            EntranceCandidate::new(
+                match door.side {
+                    crate::element_processing::building_intelligence::input::WindowSide::North => {
+                        crate::element_processing::building_intelligence::EntranceSide::North
+                    }
+                    crate::element_processing::building_intelligence::input::WindowSide::South => {
+                        crate::element_processing::building_intelligence::EntranceSide::South
+                    }
+                    crate::element_processing::building_intelligence::input::WindowSide::East => {
+                        crate::element_processing::building_intelligence::EntranceSide::East
+                    }
+                    crate::element_processing::building_intelligence::input::WindowSide::West => {
+                        crate::element_processing::building_intelligence::EntranceSide::West
+                    }
+                },
+                door.x,
+                door.z,
+            )
+        });
 
     let entrance = snapshot_door
         .or_else(|| {
@@ -225,6 +259,41 @@ pub fn build_floor_plan(
                 entrance_evidence,
             )
             .map(|e| EntranceCandidate::new(e.side, e.x, e.z))
+        })
+        .or_else(|| {
+            // ---------------------------------------------------------
+            // DETERMINISTIC FALLBACK ENTRANCE
+            // ---------------------------------------------------------
+            //
+            // Only used when ALL real-world entrance sources failed:
+            //
+            //   1. ExistingDoor
+            //   2. mapped entrance/door node
+            //   3. real-world entrance evidence inference
+            //
+            // This does NOT replace real-world entrance data.
+            // It only guarantees that a building without mapped
+            // entrance information still receives a usable main door.
+            //
+            // Deterministic rule:
+            //   - North exterior wall
+            //   - Horizontal center of the existing building bounds
+            //   - Never expands BBox
+            //   - Never modifies the building footprint
+            //
+            let fallback_x = (context.min_x + context.max_x) / 2;
+            let fallback_z = context.min_z;
+
+            println!(
+                "[BI MAIN DOOR] FALLBACK deterministic entrance: ({}, {}) side=North",
+                fallback_x, fallback_z
+            );
+
+            Some(EntranceCandidate::new(
+                EntranceSide::North,
+                fallback_x,
+                fallback_z,
+            ))
         });
 
     // ---------------------------------------------------------
@@ -394,6 +463,7 @@ pub fn build_floor_plan(
                     &decision.rooms.rooms,
                     &spatial_constraints,
                     floor_i32,
+                    &cached_floor_area_set,
                 )
         {
             println!(

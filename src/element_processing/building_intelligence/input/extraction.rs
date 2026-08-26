@@ -106,18 +106,12 @@ pub fn collect_existing_doors(
 ) -> Vec<ExistingDoor> {
     nodes
         .iter()
-        .filter(|node| {
-            node.tags.contains_key("entrance")
-                || node.tags.contains_key("door")
-        })
+        .filter(|node| node.tags.contains_key("entrance") || node.tags.contains_key("door"))
         .map(|node| {
             let entrance_value = node.tags.get("entrance");
             let door_value = node.tags.get("door");
 
-            let source = match (
-                entrance_value.is_some(),
-                door_value.is_some(),
-            ) {
+            let source = match (entrance_value.is_some(), door_value.is_some()) {
                 (true, true) => DoorSource::EntranceAndDoor,
                 (true, false) => DoorSource::Entrance,
                 (false, true) => DoorSource::Door,
@@ -142,14 +136,7 @@ pub fn collect_existing_doors(
                     .unwrap_or(1)
                     .clamp(1, 16),
 
-                side: infer_side(
-                    node.x,
-                    node.z,
-                    min_x,
-                    min_z,
-                    max_x,
-                    max_z,
-                ),
+                side: infer_side(node.x, node.z, min_x, min_z, max_x, max_z),
 
                 tags,
                 source,
@@ -174,13 +161,8 @@ pub fn nearest_road_distance(
     road_mask: &crate::floodfill_cache::RoadMaskBitmap,
     max_radius: i32,
 ) -> Option<i32> {
-    crate::element_processing::get_nearest_road_block(
-        x,
-        z,
-        max_radius,
-        road_mask,
-    )
-    .map(|(rx, rz)| (rx - x).abs() + (rz - z).abs())
+    crate::element_processing::get_nearest_road_block(x, z, max_radius, road_mask)
+        .map(|(rx, rz)| (rx - x).abs() + (rz - z).abs())
 }
 
 /// Calculate Manhattan distance from a coordinate to a set of world coordinates.
@@ -207,21 +189,16 @@ pub fn enrich_existing_door_evidence(
     parking_mask: Option<&std::collections::HashSet<(i32, i32)>>,
 ) {
     for door in doors.iter_mut() {
-        door.footway_distance =
-            nearest_distance(door.x, door.z, footway_mask);
+        door.footway_distance = nearest_distance(door.x, door.z, footway_mask);
 
-        door.road_distance =
-            nearest_distance(door.x, door.z, road_mask);
+        door.road_distance = nearest_distance(door.x, door.z, road_mask);
 
-        door.parking_distance =
-            nearest_distance(door.x, door.z, parking_mask);
+        door.parking_distance = nearest_distance(door.x, door.z, parking_mask);
     }
 }
 
 /// Returns true when a processed way represents pedestrian access.
-pub fn is_footway_way(
-    way: &crate::osm_parser::ProcessedWay,
-) -> bool {
+pub fn is_footway_way(way: &crate::osm_parser::ProcessedWay) -> bool {
     match way.tags.get("highway").map(String::as_str) {
         Some("footway")
         | Some("pedestrian")
@@ -233,8 +210,6 @@ pub fn is_footway_way(
 }
 
 /// Returns true when a processed way represents parking.
-pub fn is_parking_way(
-    way: &crate::osm_parser::ProcessedWay,
-) -> bool {
+pub fn is_parking_way(way: &crate::osm_parser::ProcessedWay) -> bool {
     way.tags.get("amenity").map(String::as_str) == Some("parking")
 }
