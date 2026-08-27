@@ -364,6 +364,252 @@ fn room_inside_cached_floor_area(
     true
 }
 
+/// Find the largest axis-aligned rectangular region inside both
+/// the candidate bounds and the authoritative cached floor mask.
+///
+/// `cached_floor_area` remains a hard physical boundary.
+/// We never invent cells; we only shrink the candidate region.
+fn clamp_rect_to_cached_floor_area(
+    candidate: Rect,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
+) -> Option<Rect> {
+    if cached_floor_area.is_empty() {
+        return None;
+    }
+
+    // ---------------------------------------------------------
+    // CANDIDATE GEOMETRY IS ONLY A SUGGESTION
+    // ---------------------------------------------------------
+    //
+    // `cached_floor_area` is the actual usable-space mask.
+    //
+    // The mask does NOT need to be rectangular.
+    //
+    // We only need to find a rectangular room INSIDE the
+    // available cells.  If the candidate is too large, shrink
+    // it instead of rejecting the entire floor.
+    //
+    // Never invent cells and never modify cached_floor_area.
+    //
+
+    let mut rect = candidate;
+
+    // First clamp to the coordinate extent of the authoritative mask.
+    let min_x = cached_floor_area.iter().map(|(x, _)| *x).min()?;
+    let max_x = cached_floor_area.iter().map(|(x, _)| *x).max()?;
+    let min_z = cached_floor_area.iter().map(|(_, z)| *z).min()?;
+    let max_z = cached_floor_area.iter().map(|(_, z)| *z).max()?;
+
+    rect.min_x = rect.min_x.max(min_x);
+    rect.max_x = rect.max_x.min(max_x);
+    rect.min_z = rect.min_z.max(min_z);
+    rect.max_z = rect.max_z.min(max_z);
+
+    if rect.min_x > rect.max_x || rect.min_z > rect.max_z {
+        return None;
+    }
+
+    // ---------------------------------------------------------
+    // Iteratively shrink the candidate until every cell belongs
+    // to the authoritative usable-space mask.
+    //
+    // Remove the side that costs the least area each iteration.
+    // This preserves as much usable geometry as possible.
+    // ---------------------------------------------------------
+
+    loop {
+        let mut invalid: Option<(i32, i32)> = None;
+
+        'scan: for z in rect.min_z..=rect.max_z {
+            for x in rect.min_x..=rect.max_x {
+                if !cached_floor_area.contains(&(x, z)) {
+                    invalid = Some((x, z));
+                    break 'scan;
+                }
+            }
+        }
+
+        if invalid.is_none() {
+            return Some(rect);
+        }
+
+        if rect.min_x == rect.max_x && rect.min_z == rect.max_z {
+            return None;
+        }
+
+        let width = rect.width();
+        let depth = rect.depth();
+
+        // Try all four possible trims and choose the one that
+        // leaves the largest remaining candidate.
+        let mut best: Option<Rect> = None;
+        let mut best_area = 0i32;
+
+        if rect.min_x < rect.max_x {
+            let r = Rect {
+                min_x: rect.min_x + 1,
+                min_z: rect.min_z,
+                max_x: rect.max_x,
+                max_z: rect.max_z,
+            };
+            let area = r.width() * r.depth();
+            if area > best_area {
+                best_area = area;
+                best = Some(r);
+            }
+
+            let r = Rect {
+                min_x: rect.min_x,
+                min_z: rect.min_z,
+                max_x: rect.max_x - 1,
+                max_z: rect.max_z,
+            };
+            let area = r.width() * r.depth();
+            if area > best_area {
+                best_area = area;
+                best = Some(r);
+            }
+        }
+
+        if rect.min_z < rect.max_z {
+            let r = Rect {
+                min_x: rect.min_x,
+                min_z: rect.min_z + 1,
+                max_x: rect.max_x,
+                max_z: rect.max_z,
+            };
+            let area = r.width() * r.depth();
+            if area > best_area {
+                best_area = area;
+                best = Some(r);
+            }
+
+            let r = Rect {
+                min_x: rect.min_x,
+                min_z: rect.min_z,
+                max_x: rect.max_x,
+                max_z: rect.max_z - 1,
+            };
+            let area = r.width() * r.depth();
+            if area > best_area {
+                best_area = area;
+                best = Some(r);
+            }
+        }
+
+        rect = best?;
+    }
+}
+
+
+/// Find the largest axis-aligned rectangular region contained entirely
+/// in the authoritative cached floor mask.
+///
+/// IMPORTANT:
+/// - `cached_floor_area` is the physical authority.
+/// - The mask may be L-shaped, T-shaped, stepped, concave, etc.
+/// - This function never invents cells.
+/// - It returns one usable rectangle; callers may remove it and search
+///   again to utilize the remaining irregular space.
+fn largest_cached_rect(
+    candidate: Rect,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
+) -> Option<Rect> {
+    if cached_floor_area.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<Rect> = None;
+    let mut best_area = 0i32;
+
+    let min_x = candidate.min_x;
+    let max_x = candidate.max_x;
+    let min_z = candidate.min_z;
+    let max_z = candidate.max_z;
+
+    // Histogram-based maximal rectangle search.
+    //
+    // Each row contributes contiguous usable horizontal runs.
+    // The histogram then finds the largest rectangle spanning
+    // multiple rows without requiring the entire floor to be rectangular.
+    let width = (max_x - min_x + 1) as usize;
+
+    if width == 0 || max_z < min_z {
+        return None;
+    }
+
+    let mut heights = vec![0i32; width];
+
+    for z in min_z..=max_z {
+        for i in 0..width {
+            let x = min_x + i as i32;
+
+            if cached_floor_area.contains(&(x, z)) {
+                heights[i] += 1;
+            } else {
+                heights[i] = 0;
+            }
+        }
+
+        // Largest rectangle in histogram.
+        let mut stack: Vec<usize> = Vec::new();
+        let mut i = 0usize;
+
+        while i <= width {
+            let current = if i == width { 0 } else { heights[i] };
+
+            while let Some(&top) = stack.last() {
+                if heights[top] <= current {
+                    break;
+                }
+
+                let h = heights[top];
+                stack.pop();
+
+                let left = stack.last().map(|&v| v + 1).unwrap_or(0);
+                let right = i - 1;
+
+                if h > 0 && right >= left {
+                    let rect = Rect {
+                        min_x: min_x + left as i32,
+                        max_x: min_x + right as i32,
+                        max_z: z,
+                        min_z: z - h + 1,
+                    };
+
+                    let area = rect.width() * rect.depth();
+
+                    if area > best_area {
+                        best_area = area;
+                        best = Some(rect);
+                    }
+                }
+            }
+
+            stack.push(i);
+            i += 1;
+        }
+    }
+
+    best
+}
+
+/// Remove a rectangular room from an authoritative usable-space mask.
+///
+/// No new cells are created. Only cells already present in the mask
+/// are removed.
+fn remove_rect_from_cached_area(
+    cached_floor_area: &mut std::collections::HashSet<(i32, i32)>,
+    room: Rect,
+) {
+    for x in room.min_x..=room.max_x {
+        for z in room.min_z..=room.max_z {
+            cached_floor_area.remove(&(x, z));
+        }
+    }
+}
+
+
 pub fn generate_spatial_floor_plan(
     bounds: Rect,
     allocations: &[RoomAllocation],
@@ -402,19 +648,27 @@ pub fn generate_spatial_floor_plan(
     }
 
     // =========================================================
-    // HARD MASK VALIDATION
+    // AUTHORITATIVE USABLE SPACE
     // =========================================================
     //
-    // The candidate interior Rect itself must be completely
-    // backed by the reconstructed real-world floor footprint.
+    // `interior` is ONLY the planner candidate bounds.
     //
-    // If even ONE cell is outside cached_floor_area, the
-    // candidate interior is invalid.
+    // IMPORTANT:
+    // `cached_floor_area` is NOT required to form one rectangular
+    // shape. Real buildings may be L-shaped, T-shaped, stepped,
+    // concave, or otherwise irregular.
     //
-    if !room_inside_cached_floor_area(interior, cached_floor_area) {
-        println!("[BI FLOOR PLAN] REJECT: candidate interior exceeds cached_floor_area");
-        return None;
-    }
+    // Therefore:
+    //   - `interior` is only the outer candidate bounds.
+    //   - `cached_floor_area` is the actual usable-space mask.
+    //   - Rooms must individually remain completely inside that mask.
+    //   - We NEVER reject the whole floor merely because the
+    //     candidate Rect contains cells outside the mask.
+    //
+    // The existing hard checks below remain authoritative:
+    //   room_inside_cached_floor_area(remaining, ...)
+    //   room_inside_cached_floor_area(room, ...)
+    //
 
     if allocations.is_empty() {
         return None;
@@ -439,6 +693,19 @@ pub fn generate_spatial_floor_plan(
 
     let mut plan = FloorPlan::new(interior);
     let mut remaining = interior;
+
+    // ---------------------------------------------------------
+    // WORKING AUTHORITATIVE MASK
+    // ---------------------------------------------------------
+    //
+    // `cached_floor_area` is the immutable physical truth.
+    // `working_floor_area` is only the unused portion for this
+    // floor-plan pass.
+    //
+    // Rooms are removed from the working mask as they are
+    // accepted. The original cached_floor_area is NEVER modified.
+    //
+    let mut working_floor_area = cached_floor_area.clone();
 
     let mut ordered: Vec<RoomAllocation> = allocations.to_vec();
 
@@ -499,13 +766,39 @@ pub fn generate_spatial_floor_plan(
             constraints,
             &ordered[index + 1..],
             floor,
+            cached_floor_area,
+            &working_floor_area,
         ) {
-            let room = candidate.room;
+            // -------------------------------------------------
+            // CANDIDATE GEOMETRY IS ONLY A SUGGESTION
+            // -------------------------------------------------
+            //
+            // The semantic solver may propose a rectangular
+            // candidate that extends beyond the actual
+            // reconstructed usable floor.
+            //
+            // Do NOT kill the whole floor-plan for that.
+            // First shrink the candidate to the largest valid
+            // rectangular region backed by cached_floor_area.
+            //
+            let candidate_room =
+                match clamp_rect_to_cached_floor_area(candidate.room, cached_floor_area) {
+                    Some(clamped) => clamped,
+                    None => continue,
+                };
+
+            // Rebuild the candidate remaining space from the
+            // authoritative usable room boundary.
+            //
+            // `candidate.remaining` is still only solver geometry,
+            // therefore it must remain bounded by the actual
+            // interior before being accepted.
+            let room = candidate_room;
 
             // HARD SAFETY CHECK
             //
-            // A solver result is accepted only if it is fully
-            // contained by the strict interior.
+            // A solver result may be adjusted, but it MUST still
+            // satisfy the authoritative physical boundary.
             if room.min_x >= interior.min_x
                 && room.max_x <= interior.max_x
                 && room.min_z >= interior.min_z
@@ -519,11 +812,42 @@ pub fn generate_spatial_floor_plan(
                     bounds: room,
                 });
 
-                remaining = candidate.remaining;
+                // -------------------------------------------------
+                // REMOVE USED CELLS FROM WORKING MASK
+                // -------------------------------------------------
+                //
+                // `cached_floor_area` remains immutable and
+                // authoritative.
+                //
+                // Only the temporary working mask is changed.
+                // This allows later allocations to use every
+                // remaining authoritative cell, including cells
+                // belonging to irregular L/T/stepped shapes.
+                //
+                for x in room.min_x..=room.max_x {
+                    for z in room.min_z..=room.max_z {
+                        working_floor_area.remove(&(x, z));
+                    }
+                }
 
-                // Re-clamp remaining to the authoritative
-                // interior so no downstream solver drift can
-                // escape the reconstructed building.
+                // The solver's remaining Rect is only a search
+                // envelope. Rebuild it from the remaining
+                // authoritative working mask instead of trusting
+                // the solver's rectangular remainder.
+                remaining = match largest_rect_in_floor_mask(
+                    interior,
+                    &working_floor_area,
+                ) {
+                    Some(next) => next,
+                    None => Rect {
+                        min_x: 1,
+                        min_z: 1,
+                        max_x: 0,
+                        max_z: 0,
+                    },
+                };
+
+                // Absolute planner-bound clamp.
                 remaining = Rect {
                     min_x: remaining.min_x.max(interior.min_x),
                     min_z: remaining.min_z.max(interior.min_z),
@@ -539,55 +863,72 @@ pub fn generate_spatial_floor_plan(
         // Deterministic fallback
         // -----------------------------------------------------
         //
-        // If the semantic solver cannot find a valid split,
-        // carve a smaller room from the remaining footprint.
+        // The semantic solver could not produce an acceptable
+        // candidate. Search the actual remaining authoritative
+        // usable-space mask instead of assuming `remaining`
+        // itself is fully usable.
         //
-        // IMPORTANT:
-        // Never fall back to the entire building footprint.
+        // The fallback is therefore mask-aware as well.
         //
 
         let min_width = allocation.min_width.max(2);
         let min_depth = allocation.min_depth.max(2);
 
-        let width = remaining.width();
-        let depth = remaining.depth();
-
-        let remaining_allocations = ordered.len() - index - 1;
-
-        let room = if width >= min_width * 2 && width >= depth {
-            let desired = allocation.required_area.max(min_width * min_depth);
-
-            let reserved_width = min_width * remaining_allocations.max(1) as i32;
-
-            let max_room_width = (width - reserved_width).max(min_width);
-
-            let room_width = (desired / depth).max(min_width).min(max_room_width);
-
-            Rect {
-                min_x: remaining.min_x,
-                min_z: remaining.min_z,
-                max_x: remaining.min_x + room_width - 1,
-                max_z: remaining.max_z,
+        let room = match largest_rect_for_allocation(
+            remaining,
+            allocation,
+            &working_floor_area,
+        ) {
+            Some(room)
+                if room.width() >= min_width
+                    && room.depth() >= min_depth =>
+            {
+                room
             }
-        } else if depth >= min_depth * 2 {
-            let desired = allocation.required_area.max(min_width * min_depth);
-
-            let reserved_depth = min_depth * remaining_allocations.max(1) as i32;
-
-            let max_room_depth = (depth - reserved_depth).max(min_depth);
-
-            let room_depth = (desired / width).max(min_depth).min(max_room_depth);
-
-            Rect {
-                min_x: remaining.min_x,
-                min_z: remaining.min_z,
-                max_x: remaining.max_x,
-                max_z: remaining.min_z + room_depth - 1,
-            }
-        } else {
-            // Remaining area cannot safely support another room.
-            continue;
+            _ => continue,
         };
+
+        // -----------------------------------------------------
+        // AUTHORITATIVE MASK CLAMP
+        // -----------------------------------------------------
+        //
+        // Fallback candidates are only suggestions.
+        // If the rectangular candidate extends beyond the
+        // authoritative usable-space mask, shrink it toward
+        // the largest valid rectangular portion instead of
+        // immediately discarding the candidate.
+        //
+        // The final room MUST still pass the hard
+        // `room_inside_cached_floor_area()` check below.
+        //
+
+        // -----------------------------------------------------
+        // MASK-AWARE FALLBACK
+        // -----------------------------------------------------
+        //
+        // The fallback candidate is only a suggestion.
+        // Search the actual remaining authoritative mask for
+        // the largest usable rectangle near the candidate.
+        //
+        // Irregular building shapes are allowed.
+        // We never require the entire floor to be rectangular.
+        //
+
+        let room = match largest_cached_rect(room, cached_floor_area) {
+            Some(candidate)
+                if candidate.width() >= min_width
+                    && candidate.depth() >= min_depth =>
+            {
+                candidate
+            }
+            _ => continue,
+        };
+
+        // HARD PHYSICAL BOUNDARY.
+        // Keep this check: cached_floor_area remains authoritative.
+        if !room_inside_cached_floor_area(room, cached_floor_area) {
+            continue;
+        }
 
         // -----------------------------------------------------
         // HARD ROOM BOUNDARY CHECK
@@ -599,6 +940,7 @@ pub fn generate_spatial_floor_plan(
             || room.max_x > interior.max_x
             || room.min_z < interior.min_z
             || room.max_z > interior.max_z
+            || !room_inside_cached_floor_area(room, cached_floor_area)
         {
             continue;
         }
@@ -624,40 +966,60 @@ pub fn generate_spatial_floor_plan(
         });
 
         // -----------------------------------------------------
+        // CONSUME THE USED AUTHORITATIVE SPACE
+        // -----------------------------------------------------
+        //
+        // `working_floor_area` is the mutable planning mask.
+        // `cached_floor_area` remains immutable and authoritative.
+        //
+        // Once a room is accepted, remove only that room's cells
+        // from the working mask. This preserves every other usable
+        // cell, including cells belonging to L/T/stepped/concave
+        // parts of the real building.
+        //
+        for x in room.min_x..=room.max_x {
+            for z in room.min_z..=room.max_z {
+                working_floor_area.remove(&(x, z));
+            }
+        }
+
+        // -----------------------------------------------------
         // Update remaining space
         // -----------------------------------------------------
+        //
+        // The old implementation reduced `remaining` to one
+        // rectangular strip. That loses usable space whenever
+        // the authoritative floor is L-shaped, T-shaped,
+        // stepped, or concave.
+        //
+        // The room itself is already guaranteed to be inside
+        // cached_floor_area. Therefore the next candidate must
+        // be searched against the authoritative mask again.
+        //
+        // Keep `remaining` bounded by the planner interior.
+        // Do NOT invent geometry outside the authoritative mask.
+        //
 
-        remaining = if room.max_x < remaining.max_x {
-            Rect {
-                min_x: room.max_x + 1,
-                min_z: remaining.min_z,
-                max_x: remaining.max_x,
-                max_z: remaining.max_z,
-            }
-        } else if room.max_z < remaining.max_z {
-            Rect {
-                min_x: remaining.min_x,
-                min_z: room.max_z + 1,
-                max_x: remaining.max_x,
-                max_z: remaining.max_z,
-            }
-        } else {
-            // Nothing usable remains.
-            Rect {
-                min_x: 1,
-                min_z: 1,
-                max_x: 0,
-                max_z: 0,
-            }
-        };
-
-        // Absolute clamp.
         remaining = Rect {
-            min_x: remaining.min_x.max(interior.min_x),
-            min_z: remaining.min_z.max(interior.min_z),
-            max_x: remaining.max_x.min(interior.max_x),
-            max_z: remaining.max_z.min(interior.max_z),
+            min_x: interior.min_x,
+            min_z: interior.min_z,
+            max_x: interior.max_x,
+            max_z: interior.max_z,
         };
+
+        // -----------------------------------------------------
+        // IMPORTANT
+        // -----------------------------------------------------
+        //
+        // `remaining` is now the search envelope.
+        // `cached_floor_area` remains the actual usable-space
+        // authority.
+        //
+        // Every subsequent room is therefore selected through
+        // `largest_cached_rect()` + `room_inside_cached_floor_area()`.
+        //
+        // Never replace cached_floor_area with this Rect.
+        //
     }
 
     // =========================================================
@@ -744,21 +1106,211 @@ struct SplitCandidate {
     score: i32,
 }
 
+
+/// Find the largest axis-aligned rectangular region fully backed by
+/// the current authoritative working floor mask.
+///
+/// The mask may be irregular (L-shaped, T-shaped, stepped, etc.).
+/// We only extract a rectangle from cells that actually exist.
+/// No cells are invented and the original cached_floor_area is untouched.
+
+/// Find the largest usable rectangle in the current working mask
+/// that satisfies one room allocation.
+///
+/// The mask remains authoritative. This function only searches it.
+/// It never creates cells outside the mask.
+fn largest_rect_for_allocation(
+    bounds: Rect,
+    allocation: &RoomAllocation,
+    floor_mask: &std::collections::HashSet<(i32, i32)>,
+) -> Option<Rect> {
+    let min_width = allocation.min_width.max(2);
+    let min_depth = allocation.min_depth.max(2);
+    let desired_area = allocation
+        .required_area
+        .max(min_width * min_depth);
+
+    let mut best: Option<Rect> = None;
+    let mut best_score = i64::MIN;
+
+    for min_z in bounds.min_z..=bounds.max_z {
+        for min_x in bounds.min_x..=bounds.max_x {
+            for width in min_width..=(bounds.max_x - min_x + 1) {
+                let max_x = min_x + width - 1;
+
+                for depth in min_depth..=(bounds.max_z - min_z + 1) {
+                    let max_z = min_z + depth - 1;
+
+                    let area = width * depth;
+
+                    // Avoid spending time on rectangles that are
+                    // already smaller than the allocation's minimum.
+                    if area < min_width * min_depth {
+                        continue;
+                    }
+
+                    let mut valid = true;
+
+                    'cells: for x in min_x..=max_x {
+                        for z in min_z..=max_z {
+                            if !floor_mask.contains(&(x, z)) {
+                                valid = false;
+                                break 'cells;
+                            }
+                        }
+                    }
+
+                    if !valid {
+                        continue;
+                    }
+
+                    // Prefer an area close to the requested area,
+                    // while still strongly preferring larger usable
+                    // regions when the request can be exceeded.
+                    let area_distance = (area - desired_area).abs() as i64;
+                    let score = (area as i64 * 1000) - area_distance;
+
+                    if score > best_score {
+                        best_score = score;
+                        best = Some(Rect {
+                            min_x,
+                            min_z,
+                            max_x,
+                            max_z,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    best
+}
+
+fn largest_rect_in_floor_mask(
+    bounds: Rect,
+    floor_mask: &std::collections::HashSet<(i32, i32)>,
+) -> Option<Rect> {
+    if floor_mask.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<Rect> = None;
+    let mut best_area = 0i32;
+
+    for min_z in bounds.min_z..=bounds.max_z {
+        for min_x in bounds.min_x..=bounds.max_x {
+            if !floor_mask.contains(&(min_x, min_z)) {
+                continue;
+            }
+
+            let mut max_x = min_x;
+
+            while max_x <= bounds.max_x
+                && floor_mask.contains(&(max_x, min_z))
+            {
+                let mut max_z = min_z;
+
+                loop {
+                    if max_z > bounds.max_z {
+                        break;
+                    }
+
+                    let mut valid = true;
+
+                    for x in min_x..=max_x {
+                        if !floor_mask.contains(&(x, max_z)) {
+                            valid = false;
+                            break;
+                        }
+                    }
+
+                    if !valid {
+                        break;
+                    }
+
+                    let rect = Rect {
+                        min_x,
+                        min_z,
+                        max_x,
+                        max_z,
+                    };
+
+                    let area = rect.width() * rect.depth();
+
+                    if area > best_area {
+                        best_area = area;
+                        best = Some(rect);
+                    }
+
+                    max_z += 1;
+                }
+
+                max_x += 1;
+            }
+        }
+    }
+
+    best
+}
+
 fn find_best_split(
     remaining: Rect,
     allocation: &RoomAllocation,
     constraints: &SpatialConstraints,
     remaining_allocations: &[RoomAllocation],
     floor: i32,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
+    working_floor_area: &std::collections::HashSet<(i32, i32)>,
 ) -> Option<SplitCandidate> {
     let mut best: Option<SplitCandidate> = None;
 
-    // ---------------------------------------------------------
+    // =========================================================
+    // MASK-AWARE CANDIDATES
+    // =========================================================
+    //
+    // The rectangular `remaining` value is only a search envelope.
+    // The real usable floor is represented by `cached_floor_area`.
+    //
+    // Search the actual mask first so irregular buildings such as
+    // L/T/stepped/concave footprints remain usable.
+    //
+
+    if let Some(room) = largest_rect_for_allocation(
+        remaining,
+        allocation,
+        working_floor_area,
+    ) {
+        if room_inside_cached_floor_area(room, cached_floor_area) {
+            let next = remaining;
+
+            if can_reserve_remaining_space(
+                next,
+                remaining_allocations,
+            ) {
+                let base_score =
+                    score_room(room, allocation, constraints, floor);
+
+                let topology_score =
+                    topology_candidate_score(room, next);
+
+                consider_candidate(
+                    &mut best,
+                    SplitCandidate {
+                        room,
+                        remaining: next,
+                        score: base_score + topology_score,
+                    },
+                );
+            }
+        }
+    }
+
+    // =========================================================
     // X AXIS CANDIDATES
-    // ---------------------------------------------------------
+    // =========================================================
 
     let min_x_split = allocation.min_width.max(2);
-
     let max_x_split = remaining.width() - 2;
 
     if min_x_split <= max_x_split {
@@ -772,6 +1324,10 @@ fn find_best_split(
                 max_z: remaining.max_z,
             };
 
+            if !room_inside_cached_floor_area(room, cached_floor_area) {
+                continue;
+            }
+
             let next = Rect {
                 min_x: max_x + 1,
                 min_z: remaining.min_z,
@@ -783,27 +1339,28 @@ fn find_best_split(
                 continue;
             }
 
-            let base_score = score_room(room, allocation, constraints, floor);
-            let topology_score = topology_candidate_score(room, next);
-            let score = base_score + topology_score;
+            let base_score =
+                score_room(room, allocation, constraints, floor);
+
+            let topology_score =
+                topology_candidate_score(room, next);
 
             consider_candidate(
                 &mut best,
                 SplitCandidate {
                     room,
                     remaining: next,
-                    score,
+                    score: base_score + topology_score,
                 },
             );
         }
     }
 
-    // ---------------------------------------------------------
+    // =========================================================
     // Z AXIS CANDIDATES
-    // ---------------------------------------------------------
+    // =========================================================
 
     let min_z_split = allocation.min_depth.max(2);
-
     let max_z_split = remaining.depth() - 2;
 
     if min_z_split <= max_z_split {
@@ -817,6 +1374,10 @@ fn find_best_split(
                 max_z,
             };
 
+            if !room_inside_cached_floor_area(room, cached_floor_area) {
+                continue;
+            }
+
             let next = Rect {
                 min_x: remaining.min_x,
                 min_z: max_z + 1,
@@ -828,16 +1389,18 @@ fn find_best_split(
                 continue;
             }
 
-            let base_score = score_room(room, allocation, constraints, floor);
-            let topology_score = topology_candidate_score(room, next);
-            let score = base_score + topology_score;
+            let base_score =
+                score_room(room, allocation, constraints, floor);
+
+            let topology_score =
+                topology_candidate_score(room, next);
 
             consider_candidate(
                 &mut best,
                 SplitCandidate {
                     room,
                     remaining: next,
-                    score,
+                    score: base_score + topology_score,
                 },
             );
         }
