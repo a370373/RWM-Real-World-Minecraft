@@ -1664,7 +1664,8 @@ Procedural Generation
 
 ## 👀作品 & 產品 集
 
-- [RWM- 1:1 Real World Minecraft](https://github.com/a370373/RWM-Real-World-Minecraft)
+- [MyAI-Offline Personal AI Agent System](https://github.com/a370373/MyAI-Offline-Personal-AI-Agent-System-)
+- [RWM-1:1 Real World Minecraft](https://github.com/a370373/RWM-Real-World-Minecraft)
 - 持續增加中…👀
 
 ---
