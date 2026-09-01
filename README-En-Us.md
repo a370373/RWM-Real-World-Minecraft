@@ -1,8 +1,8 @@
-🗺️ RWM — Real World Minecraft
+## 🗺️ RWM — Real World Minecraft
 
 «“Bring the real world into Minecraft — not simply by copying its map, but by reconstructing its space.”»
 
-RWM (Real World Minecraft) is a Local-First, CLI-First, Multi-Source Real-World Reconstruction Engine.
+# RWM (Real World Minecraft) is a Local-First, CLI-First, Multi-Source Real-World Reconstruction Engine.
 
 RWM takes real-world:
 
@@ -29,11 +29,11 @@ Real World → Data → Understanding → Reconstruction → Minecraft
 
 ---
 
-✨ Core Philosophy
+## ✨ Core Philosophy
 
 RWM is built around four core principles.
 
-🌍 Real-World First
+# 🌍 Real-World First
 
 Real-world data is the foundation of generation.
 
@@ -55,7 +55,7 @@ and reconstruct that information as a Minecraft world.
 
 ---
 
-💾 Local-First
+## 💾 Local-First
 
 RWM prioritizes existing local:
 
@@ -79,7 +79,7 @@ For data that has already been acquired and stored locally, RWM can continue sub
 
 ---
 
-⚙️ CLI-First
+## ⚙️ CLI-First
 
 The RWM core engine does not depend on a GUI.
 
@@ -105,7 +105,7 @@ World Generation
 
 ---
 
-🧩 Multi-Source
+## 🧩 Multi-Source
 
 RWM does not depend on a single database or a single official service.
 
@@ -119,7 +119,7 @@ Therefore, data sources can be:
 
 ---
 
-🌍 1. Real-World Geographic Selection
+## 🌍 1. Real-World Geographic Selection
 
 RWM starts from a Geographic Bounding Box (BBox) on the real Earth.
 
@@ -149,7 +149,7 @@ Real-world data inside the BBox forms the core scope of the World Reconstruction
 
 ---
 
-📐 2. Geographic → Minecraft Mapping
+## 📐 2. Geographic → Minecraft Mapping
 
 RWM converts:
 
@@ -188,7 +188,7 @@ Therefore, “1:1” refers to spatial scale and geographic-position mapping. It
 
 ---
 
-🌐 3. Multi-Source Real-World Data
+## 🌐 3. Multi-Source Real-World Data
 
 RWM uses multiple public and third-party data sources.
 
@@ -227,7 +227,7 @@ RWM does not depend on a single centralized world database.
 
 ---
 
-🗺️ 4. OpenStreetMap Integration
+## 🗺️ 4. OpenStreetMap Integration
 
 OpenStreetMap (OSM) provides major real-world geographic and human-environment information.
 
@@ -257,7 +257,7 @@ RWM can use multiple public Overpass endpoints to reduce dependency on a single 
 
 ---
 
-🏢 5. Overture Maps Integration
+## 🏢 5. Overture Maps Integration
 
 Overture Maps is used to supplement and enhance building and other geographic information.
 
@@ -282,7 +282,7 @@ Public STAC / S3 data sources from Overture Maps can form part of the building-d
 
 ---
 
-⛰️ 6. Elevation System
+## ⛰️ 6. Elevation System
 
 RWM uses real-world Elevation Data to construct Minecraft Terrain.
 
@@ -318,7 +318,7 @@ Different Elevation Providers can serve as alternative or supplementary data sou
 
 ---
 
-🌱 7. Land Cover System
+## 🌱 7. Land Cover System
 
 RWM can use land-cover data such as ESA WorldCover to determine real-world surface types.
 
@@ -344,7 +344,7 @@ This gives natural environments a real-world data foundation.
 
 ---
 
-🌦️ 8. Climate / Environmental Data
+## 🌦️ 8. Climate / Environmental Data
 
 RWM's environment system can use climate and environmental classification data as a foundation for:
 
@@ -368,7 +368,7 @@ Specific data sources and generation rules will continue to expand according to 
 
 ---
 
-🏛️ 9. 3D Model & Landmark System
+## 🏛️ 9. 3D Model & Landmark System
 
 RWM supports third-party 3D Model / Landmark Data.
 
@@ -394,7 +394,7 @@ Third-party model sources and RWM-owned / Bundled Assets remain architecturally 
 
 ---
 
-💾 10. Local-First Asset System
+## 💾 10. Local-First Asset System
 
 RWM resolves assets according to:
 
@@ -426,7 +426,7 @@ It means:
 
 ---
 
-🧱 11. RWM Asset / NBTX System
+## 🧱 11. RWM Asset / NBTX System
 
 RWM uses local and bundled Minecraft assets to construct objects inside the world.
 
@@ -456,7 +456,7 @@ NBTX / Minecraft assets can be used by the World Generation Layer as locally acq
 
 ---
 
-🧠 12. RWM World Reconstruction Engine
+## 🧠 12. RWM World Reconstruction Engine
 
 The RWM World Engine is the core of the entire system.
 
@@ -492,7 +492,7 @@ The World Reconstruction Engine has the authoritative role over real-world geome
 
 ---
 
-🏙️ 13. Real-World Structure Engine
+## 🏙️ 13. Real-World Structure Engine
 
 RWM can reconstruct real-world human-made environments as Minecraft structures.
 
@@ -530,7 +530,7 @@ Minecraft Building
 
 ---
 
-🏢 14. Building Reconstruction Engine
+## 🏢 14. Building Reconstruction Engine
 
 RWM's world-reconstruction core is responsible for constructing real-world building:
 
@@ -556,7 +556,7 @@ The World Reconstruction Engine is the authoritative source for Building Exterio
 
 ---
 
-🧠 15. Building Intelligence Engine
+## 🧠 15. Building Intelligence Engine
 
 In addition to the World Reconstruction Engine, RWM includes an independent Building Intelligence Layer.
 
@@ -597,7 +597,7 @@ Building Intelligence is the interpretation / planning layer, not the Exterior R
 
 ---
 
-🪟 16. Existing Building Geometry & Window Intelligence
+## 🪟 16. Existing Building Geometry & Window Intelligence
 
 RWM's Interior Engine does not regenerate exterior building windows.
 
@@ -643,7 +643,7 @@ The Interior Engine does not:
 
 ---
 
-☀️ 17. Daylight Intelligence
+## ☀️ 17. Daylight Intelligence
 
 RWM can analyze natural daylight information provided by existing building windows.
 
@@ -679,7 +679,7 @@ Interior Planning
 
 ---
 
-🏠 18. Procedural Interior Engine
+## 🏠 18. Procedural Interior Engine
 
 RWM's Interior Engine is not simply:
 
@@ -725,7 +725,7 @@ It does not redefine the building itself.
 
 ---
 
-🏢 19. Building Type System
+## 🏢 19. Building Type System
 
 RWM can determine building usage through OSM / Overture / Building Intelligence.
 
@@ -757,7 +757,7 @@ Building Type can influence:
 
 ---
 
-🏫 20. Building-Type Room Templates
+## 🏫 20. Building-Type Room Templates
 
 For example:
 
@@ -788,7 +788,7 @@ Room templates are planning rules rather than a guarantee that every real-world 
 
 ---
 
-📐 21. Intelligent Room Allocation
+## 📐 21. Intelligent Room Allocation
 
 Room Allocation is not simply a fixed number of rooms.
 
@@ -829,7 +829,7 @@ More Complex Layout
 
 ---
 
-🧩 22. Procedural Floor Plan
+## 🧩 22. Procedural Floor Plan
 
 The Floor Plan Engine generates spatial layouts according to the actual building geometry.
 
@@ -852,7 +852,7 @@ The Floor Plan must remain constrained by the existing building geometry rather 
 
 ---
 
-🕸️ 23. Room Graph / Spatial Topology
+## 🕸️ 23. Room Graph / Spatial Topology
 
 RWM treats interior space as a Spatial Graph.
 
@@ -886,7 +886,7 @@ rather than simply drawing rooms.
 
 ---
 
-🚪 24. Entrance & Door Intelligence
+## 🚪 24. Entrance & Door Intelligence
 
 RWM handles two types of entrances.
 
@@ -931,7 +931,7 @@ Doors are therefore part of the spatial topology, not randomly placed decoration
 
 ---
 
-🚶 25. Interior Circulation
+## 🚶 25. Interior Circulation
 
 RWM's Interior Engine includes interior circulation planning.
 
@@ -952,7 +952,7 @@ The goal is:
 
 ---
 
-🪑 26. Room-Aware Furniture System
+## 🪑 26. Room-Aware Furniture System
 
 Furniture is determined through:
 
@@ -1007,7 +1007,7 @@ to avoid blocking major circulation spaces.
 
 ---
 
-💡 27. Interior Lighting
+## 💡 27. Interior Lighting
 
 The Interior Engine can create interior artificial-lighting layouts based on:
 
@@ -1022,7 +1022,7 @@ Natural daylight and artificial lighting are therefore part of the same Interior
 
 ---
 
-🎲 28. Procedural Variation
+## 🎲 28. Procedural Variation
 
 RWM does not want every building to be identical.
 
@@ -1046,7 +1046,7 @@ Therefore, even two buildings of the same type can produce different:
 
 ---
 
-🏠 29. Interior Engine Safety Boundary
+## 🏠 29. Interior Engine Safety Boundary
 
 RWM explicitly separates:
 
@@ -1097,7 +1097,7 @@ World Reconstruction remains authoritative.
 
 ---
 
-🌳 30. Terrain & Environment Generation
+## 🌳 30. Terrain & Environment Generation
 
 RWM combines:
 
@@ -1117,7 +1117,7 @@ It can generate:
 
 ---
 
-🌊 31. Outside Terrain
+## 🌊 31. Outside Terrain
 
 The world outside the BBox can be selected by the user.
 
@@ -1146,7 +1146,7 @@ Outside Terrain is the external-environment generation layer outside the BBox, n
 
 ---
 
-📏 32. Outside Padding
+## 📏 32. Outside Padding
 
 Users can control additional generated space around the BBox.
 
@@ -1174,7 +1174,7 @@ Outside Padding defines the additional generation space that may extend beyond t
 
 ---
 
-🎮 33. Minecraft World Output
+## 🎮 33. Minecraft World Output
 
 RWM can output generated results as Minecraft worlds.
 
@@ -1198,7 +1198,7 @@ The World Output Layer writes the results of the RWM World Engine into the corre
 
 ---
 
-⚙️ 34. CLI-First
+## ⚙️ 34. CLI-First
 
 The RWM core Engine uses the CLI as its primary control interface.
 
@@ -1239,7 +1239,7 @@ RWM's core capabilities should not depend on a GUI.
 
 ---
 
-💾 35. Local-First
+## 💾 35. Local-First
 
 RWM's data and asset strategy is:
 
@@ -1267,7 +1267,7 @@ Local-First is a data and asset strategy. It does not mean that all Real-World D
 
 ---
 
-🧩 36. Resilient Multi-Source Architecture
+## 🧩 36. Resilient Multi-Source Architecture
 
 RWM does not bind every capability to a single API.
 
@@ -1299,7 +1299,7 @@ This is one of the core design principles of RWM's Multi-Source / Resilient Arch
 
 ---
 
-🏗️ 37. Complete RWM Architecture
+## 🏗️ 37. Complete RWM Architecture
 
                  🌍 REAL WORLD
                        │
@@ -1382,7 +1382,7 @@ This is one of the core design principles of RWM's Multi-Source / Resilient Arch
 
 ---
 
-🧭 38. End-to-End Pipeline
+## 🧭 38. End-to-End Pipeline
 
 Complete generation flow:
 
@@ -1431,7 +1431,7 @@ Minecraft World
 
 ---
 
-🎯 39. RWM vs. Simple Map Conversion
+## 🎯 39. RWM vs. Simple Map Conversion
 
 RWM is not simply:
 
@@ -1478,7 +1478,7 @@ This allows RWM to handle:
 
 ---
 
-📦 40. Data Sources & Attribution
+## 📦 40. Data Sources & Attribution
 
 RWM uses public and third-party data sources.
 
@@ -1554,7 +1554,7 @@ RWM's third-party data sources may change according to service availability, dat
 
 ---
 
-⚖️ 41. Independence
+## ⚖️ 41. Independence
 
 RWM is currently being developed as an independent project.
 
@@ -1578,7 +1578,7 @@ Modular World Engine
 
 ---
 
-🧪 42. Current Development Status
+## 🧪 42. Current Development Status
 
 The current core direction includes:
 
@@ -1629,7 +1629,7 @@ Some more advanced Climate / Biome / Environment Intelligence capabilities can c
 
 ---
 
-🚀 Vision
+## 🚀 Vision
 
 RWM ultimately aims to become more than:
 
@@ -1655,7 +1655,7 @@ Procedural Generation
 
 before ultimately becoming:
 
-🌍 A Minecraft World Built From The Real World
+# 🌍 A Minecraft World Built From The Real World
 
 RWM — Real World Minecraft
 
