@@ -288,6 +288,66 @@ fn render_stair<E: VerticalAccessEditor>(
     }
 
     /*
+     * HARD STAIR OPENING CONTRACT
+     *
+     * The stair is two blocks wide. At the upper exit:
+     *
+     *   - clear the 2-wide stair exit itself
+     *   - extend the opening two more blocks forward
+     *   - clear two vertical blocks for player headroom
+     *
+     * Total opening length = 4 blocks.
+     *
+     * The opening is cleared BEFORE the stairs are placed so the
+     * top stair itself is restored afterwards.
+     *
+     * cached_floor_area remains authoritative.
+     */
+    let opening_width = plan.width.min(2).max(1);
+    let opening_length = 4;
+
+    for forward in 0..opening_length {
+        let (base_x, base_z) = match plan.direction {
+            VerticalAccessDirection::North => {
+                (plan.x, plan.z - height - forward)
+            }
+            VerticalAccessDirection::East => {
+                (plan.x + height + forward, plan.z)
+            }
+            VerticalAccessDirection::South => {
+                (plan.x, plan.z + height + forward)
+            }
+            VerticalAccessDirection::West => {
+                (plan.x - height - forward, plan.z)
+            }
+        };
+
+        for w in 0..opening_width {
+            let (x, z) = match plan.direction {
+                VerticalAccessDirection::North
+                | VerticalAccessDirection::South => {
+                    (base_x + w, base_z)
+                }
+                VerticalAccessDirection::East
+                | VerticalAccessDirection::West => {
+                    (base_x, base_z + w)
+                }
+            };
+
+            if !cached_floor_area_set.contains(&(x, z)) {
+                eprintln!(
+                    "[BI VERTICAL] STAIR OPENING SKIP outside cached_floor_area: ({}, {})",
+                    x, z
+                );
+                continue;
+            }
+
+            editor.clear_block(x, plan.upper_y, z);
+            editor.clear_block(x, plan.upper_y + 1, z);
+        }
+    }
+
+    /*
      * Place the actual stair.
      *
      * HARD SUPPORT RULE:
@@ -360,55 +420,34 @@ fn render_stair<E: VerticalAccessEditor>(
              * No BBox modification.
              */
 
-            let mut support_y = y - 1;
-
-            while support_y >= MIN_Y {
-                match editor.block_at(x, support_y, z) {
-                    Some(existing) if existing != AIR => {
-                        break;
-                    }
-
-                    _ => {
-                        support_y -= 1;
-                    }
-                }
-            }
-
             /*
-             * Nothing solid was found before the valid world
-             * minimum. Do not invent a landing.
-             */
-            if support_y < MIN_Y {
-                eprintln!(
-                    "[BI VERTICAL] REJECT: no existing landing found below stair at ({}, {}, {})",
-                    x, y, z
-                );
-                return;
-            }
-
-            /*
-             * Fill only the AIR gap.
+             * HARD STAIR SUPPORT CONTRACT
              *
-             * The existing landing block at support_y is never
-             * overwritten.
+             * The stair block itself is the staircase.
+             *
+             * Do NOT scan downward and fill the entire vertical
+             * column beneath every stair step. That turns the
+             * staircase into a solid "stair column".
+             *
+             * Only the block directly underneath the current
+             * stair step may be used as local support.
+             *
+             * cached_floor_area remains authoritative.
              */
-            for fill_y in (support_y + 1)..=y - 1 {
-                if !cached_floor_area_set.contains(&(x, z)) {
-                    eprintln!(
-                        "[BI VERTICAL] REJECT: support fill ({}, {}) outside cached_floor_area",
-                        x, z
-                    );
-                    return;
-                }
+            let support_y = y - 1;
 
-                match editor.block_at(x, fill_y, z) {
-                    Some(existing) if existing != AIR => {
-                        // Existing geometry is authoritative.
-                        continue;
-                    }
-
+            if support_y >= MIN_Y
+                && cached_floor_area_set.contains(&(x, z))
+            {
+                match editor.block_at(x, support_y, z) {
+                    Some(existing) if existing != AIR => {}
                     _ => {
-                        editor.place_block(block.clone(), x, fill_y, z);
+                        editor.place_block(
+                            block.clone(),
+                            x,
+                            support_y,
+                            z,
+                        );
                     }
                 }
             }

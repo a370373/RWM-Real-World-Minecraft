@@ -39,6 +39,7 @@ impl FurniturePlanner {
         constraints: &SpatialConstraints,
         room_graph: &RoomGraph,
         floor: i32,
+        cached_floor_area: &std::collections::HashSet<(i32, i32)>,
     ) -> Vec<FurnitureItem> {
         let mut furniture = Vec::new();
 
@@ -61,7 +62,14 @@ impl FurniturePlanner {
             //        -> FloorPlan.rooms[floor_room_index]
             //
             // Never use RoomType or local room ordering as ownership.
-            self.plan_room(room_node.id, room, constraints, floor, &mut furniture);
+            self.plan_room(
+                room_node.id,
+                room,
+                constraints,
+                floor,
+                cached_floor_area,
+                &mut furniture,
+            );
         }
 
         eprintln!(
@@ -80,12 +88,21 @@ impl FurniturePlanner {
         room: &Room,
         constraints: &SpatialConstraints,
         floor: i32,
+        cached_floor_area: &std::collections::HashSet<(i32, i32)>,
         output: &mut Vec<FurnitureItem>,
     ) {
         let profile = furniture_profile(room.room_type);
 
         for &kind in profile {
-            if let Some((x, z)) = find_position(room_id, room, kind, constraints, floor, output) {
+            if let Some((x, z)) = find_position(
+                    room_id,
+                    room,
+                    kind,
+                    constraints,
+                    floor,
+                    cached_floor_area,
+                    output,
+                ) {
                 output.push(FurnitureItem {
                     room_id,
                     kind,
@@ -136,43 +153,99 @@ fn find_position(
     kind: FurnitureKind,
     constraints: &SpatialConstraints,
     floor: i32,
+    cached_floor_area: &std::collections::HashSet<(i32, i32)>,
     existing: &[FurnitureItem],
 ) -> Option<(i32, i32)> {
     let (width, depth) = furniture_size(kind);
-
     let bounds = room.bounds;
 
     if bounds.width() < width || bounds.depth() < depth {
         return None;
     }
 
-    // One-block circulation margin.
-    let max_x = bounds.width() - width - 1;
-    let max_z = bounds.depth() - depth - 1;
-
-    if max_x < 1 || max_z < 1 {
-        return None;
-    }
-
     let mut candidates = Vec::new();
 
-    for z in 1..=max_z {
-        for x in 1..=max_x {
-            if collides(x, z, width, depth, room_id, existing) {
+    // Search the actual room geometry instead of assuming that
+    // the rectangular Room bounds are completely usable.
+    //
+    // `room.bounds` is only the planner envelope. The renderer
+    // remains the final ownership/safety authority.
+    for z in bounds.min_z..=bounds.max_z {
+        for x in bounds.min_x..=bounds.max_x {
+            let rel_x = x - bounds.min_x;
+            let rel_z = z - bounds.min_z;
+
+            // The complete furniture footprint must fit inside
+            // the owning Room bounds.
+            if rel_x < 0
+                || rel_z < 0
+                || rel_x + width > bounds.width()
+                || rel_z + depth > bounds.depth()
+            {
                 continue;
             }
 
-            if touches_existing_window(room, x, z, width, depth, constraints, floor) {
+            // `cached_floor_area` is the authoritative physical
+            // interior footprint. Every block occupied by this
+            // furniture item must exist in it.
+            //
+            // Never modify the cached mask here.
+            let footprint_inside_cached_floor_area =
+                (0..width).all(|dx| {
+                    (0..depth).all(|dz| {
+                        cached_floor_area.contains(&(
+                            bounds.min_x + rel_x + dx,
+                            bounds.min_z + rel_z + dz,
+                        ))
+                    })
+                });
+
+            if !footprint_inside_cached_floor_area {
                 continue;
             }
 
-            if touches_existing_entrance(room, x, z, width, depth, constraints, floor) {
+            // Furniture must not overlap another planned item.
+            if collides(rel_x, rel_z, width, depth, room_id, existing) {
                 continue;
             }
 
-            let score = candidate_score(room, kind, x, z, width, depth, constraints, floor);
+            // Keep furniture away from windows and entrances.
+            if touches_existing_window(
+                room,
+                rel_x,
+                rel_z,
+                width,
+                depth,
+                constraints,
+                floor,
+            ) {
+                continue;
+            }
 
-            candidates.push((score, x, z));
+            if touches_existing_entrance(
+                room,
+                rel_x,
+                rel_z,
+                width,
+                depth,
+                constraints,
+                floor,
+            ) {
+                continue;
+            }
+
+            let score = candidate_score(
+                room,
+                kind,
+                rel_x,
+                rel_z,
+                width,
+                depth,
+                constraints,
+                floor,
+            );
+
+            candidates.push((score, rel_x, rel_z));
         }
     }
 

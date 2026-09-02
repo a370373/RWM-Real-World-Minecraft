@@ -531,6 +531,7 @@ pub fn build_floor_plan(
             &spatial_constraints,
             &room_graph,
             floor as i32,
+            &cached_floor_area_set,
         ));
     }
 
