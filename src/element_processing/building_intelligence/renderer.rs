@@ -684,7 +684,9 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
     // cached_floor_area elsewhere in this renderer.
     // ---------------------------------------------------------
     if let Some(main_door) = planned_building.doorway_plan.main_entrance {
-        if let (Some(x), Some(z), Some(side)) = (main_door.x, main_door.z, main_door.side) {
+        if let (Some(requested_x), Some(requested_z), Some(side)) =
+            (main_door.x, main_door.z, main_door.side)
+        {
             let orientation = match side {
                 crate::element_processing::building_intelligence::EntranceSide::North
                 | crate::element_processing::building_intelligence::EntranceSide::South => "north",
@@ -693,138 +695,352 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
                 | crate::element_processing::building_intelligence::EntranceSide::West => "east",
             };
 
-            let floor_y = floor_levels.first().copied().unwrap_or(start_y_offset);
+            let floor_y =
+                floor_levels.first().copied().unwrap_or(start_y_offset);
             let door_y = floor_y + 1;
             let width = main_door.width.max(1);
 
-            // -------------------------------------------------
-            // HARD BOUNDARY
-            // -------------------------------------------------
-            //
-            // The real-world entrance coordinate is authoritative.
-            // Never move it and never expand the building.
-            //
-            // The exterior opening may touch the reconstructed
-            // building wall, but every interior clearing operation
-            // MUST remain inside cached_floor_area.
-            //
-            // -------------------------------------------------
+            /*
+             * HARD MAIN ENTRANCE CONTRACT
+             *
+             * The semantic entrance candidate is authoritative when
+             * it physically corresponds to the reconstructed building
+             * shell.
+             *
+             * If it does NOT touch the real shell, resolve a fallback
+             * from cached_floor_area:
+             *
+             *     exterior shell
+             *          │
+             *          │
+             *     interior boundary cell
+             *
+             * The fallback is valid ONLY when:
+             *
+             *   1. every interior doorway cell is inside
+             *      cached_floor_area
+             *
+             *   2. every outward wall cell is outside
+             *      cached_floor_area
+             *
+             *   3. the outward wall cell remains inside the
+             *      reconstructed building renderer bounds
+             *
+             *   4. an actual non-AIR shell block exists at the
+             *      doorway height
+             *
+             * No coordinate is fabricated.
+             * No BBox expansion is allowed.
+             */
 
-            if x < min_x || x > max_x || z < min_z || z > max_z {
-                println!(
-                    "[BI MAIN DOOR] SKIP outside building bounds: ({}, {})",
-                    x, z
-                );
-            } else {
-                let half = width / 2;
+            let cached_floor = &cached_floor_area_set;
 
-                // -------------------------------------------------
-                // 1. Open the existing exterior wall
-                // -------------------------------------------------
+            let width = width.min(2).max(1);
+            let half = width / 2;
 
-                match side {
-                    crate::element_processing::building_intelligence::EntranceSide::North
-                    | crate::element_processing::building_intelligence::EntranceSide::South => {
-                        for dx in -half..=(width - half - 1) {
-                            let door_x = x + dx;
+            /*
+             * Build a complete candidate footprint.
+             *
+             * Returns:
+             *
+             *   (interior_cells, wall_cells)
+             *
+             * where the wall cells are the actual exterior shell
+             * coordinates and the interior cells are the first
+             * cached-floor cells behind them.
+             */
+            let build_candidate = |center_x: i32,
+                                   center_z: i32,
+                                   candidate_side:
+                                       crate::element_processing::building_intelligence::EntranceSide|
+             -> Option<(Vec<(i32, i32)>, Vec<(i32, i32)>)> {
+                let mut interior_cells = Vec::new();
+                let mut wall_cells = Vec::new();
 
-                            if door_x < min_x || door_x > max_x {
-                                continue;
-                            }
-
-                            for y in door_y..=(door_y + 1) {
-                                editor.set_block_absolute(AIR, door_x, y, z, None, Some(&[]));
-                            }
+                for offset in -half..=(width - half - 1) {
+                    let (ix, iz, wx, wz) = match candidate_side {
+                        crate::element_processing::building_intelligence::EntranceSide::North => {
+                            (
+                                center_x + offset,
+                                center_z,
+                                center_x + offset,
+                                center_z - 1,
+                            )
                         }
+
+                        crate::element_processing::building_intelligence::EntranceSide::South => {
+                            (
+                                center_x + offset,
+                                center_z,
+                                center_x + offset,
+                                center_z + 1,
+                            )
+                        }
+
+                        crate::element_processing::building_intelligence::EntranceSide::East => {
+                            (
+                                center_x,
+                                center_z + offset,
+                                center_x + 1,
+                                center_z + offset,
+                            )
+                        }
+
+                        crate::element_processing::building_intelligence::EntranceSide::West => {
+                            (
+                                center_x,
+                                center_z + offset,
+                                center_x - 1,
+                                center_z + offset,
+                            )
+                        }
+                    };
+
+                    // Interior MUST be real reconstructed floor.
+                    if !cached_floor.contains(&(ix, iz)) {
+                        return None;
                     }
 
-                    crate::element_processing::building_intelligence::EntranceSide::East
-                    | crate::element_processing::building_intelligence::EntranceSide::West => {
-                        for dz in -half..=(width - half - 1) {
-                            let door_z = z + dz;
-
-                            if door_z < min_z || door_z > max_z {
-                                continue;
-                            }
-
-                            for y in door_y..=(door_y + 1) {
-                                editor.set_block_absolute(AIR, x, y, door_z, None, Some(&[]));
-                            }
-                        }
+                    // Exterior wall MUST NOT be part of interior floor.
+                    if cached_floor.contains(&(wx, wz)) {
+                        return None;
                     }
+
+                    // Wall must stay inside the reconstructed renderer bounds.
+                    if wx < min_x
+                        || wx > max_x
+                        || wz < min_z
+                        || wz > max_z
+                    {
+                        return None;
+                    }
+
+                    // There must actually be reconstructed shell material
+                    // at the doorway height.
+                    let lower = editor.get_block_absolute(
+                        wx,
+                        door_y,
+                        wz,
+                    );
+
+                    let upper = editor.get_block_absolute(
+                        wx,
+                        door_y + 1,
+                        wz,
+                    );
+
+                    let has_shell =
+                        lower.map(|b| b != AIR).unwrap_or(false)
+                        || upper.map(|b| b != AIR).unwrap_or(false);
+
+                    if !has_shell {
+                        return None;
+                    }
+
+                    interior_cells.push((ix, iz));
+                    wall_cells.push((wx, wz));
                 }
 
-                // -------------------------------------------------
-                // 2. Clear the FIRST interior cell
-                //
-                // This is the physical connection:
-                //
-                // exterior door
-                //       ↓
-                // interior entrance cell
-                //
-                // Only cached_floor_area may be cleared.
-                // -------------------------------------------------
+                Some((interior_cells, wall_cells))
+            };
 
-                let interior = match side {
-                    crate::element_processing::building_intelligence::EntranceSide::North => {
-                        (x, z + 1)
-                    }
-
-                    crate::element_processing::building_intelligence::EntranceSide::South => {
-                        (x, z - 1)
-                    }
-
-                    crate::element_processing::building_intelligence::EntranceSide::East => {
-                        (x - 1, z)
-                    }
-
-                    crate::element_processing::building_intelligence::EntranceSide::West => {
-                        (x + 1, z)
-                    }
-                };
-
-                if cached_floor_area_set.contains(&interior) {
-                    for y in door_y..=(door_y + 1) {
-                        editor.set_block_absolute(AIR, interior.0, y, interior.1, None, Some(&[]));
-                    }
-
-                    println!(
-                        "[BI MAIN DOOR] CONNECTED exterior=({}, {}) interior=({}, {}) side={:?}",
-                        x, z, interior.0, interior.1, side
-                    );
-                } else {
-                    println!(
-                        "[BI MAIN DOOR] INTERIOR CONNECTION SKIP outside cached_floor_area: ({}, {})",
-                        interior.0,
-                        interior.1
-                    );
-                }
-
-                // -------------------------------------------------
-                // 3. Materialize the actual door
-                // -------------------------------------------------
-
-                let lower = interior_door_block_with_state(orientation, false, false, false);
-
-                let upper = interior_door_block_with_state(orientation, true, false, false);
-
-                editor.set_block_with_properties_absolute(lower, x, door_y, z, None, None);
-
-                editor.set_block_with_properties_absolute(upper, x, door_y + 1, z, None, None);
-
-                println!(
-                    "[BI MAIN DOOR] MATERIALIZED anchor=({}, {}) side={:?} width={} y={}..{}",
-                    x,
-                    z,
+            /*
+             * First try the semantic entrance coordinate exactly as
+             * supplied by the detector.
+             */
+            let authoritative_candidate =
+                build_candidate(
+                    requested_x,
+                    requested_z,
                     side,
-                    width,
-                    door_y,
-                    door_y + 1
                 );
+
+            /*
+             * If the semantic coordinate does not physically touch
+             * the reconstructed shell, search the real cached-floor
+             * boundary for a valid fallback.
+             */
+            let candidate = if authoritative_candidate.is_some() {
+                println!(
+                    "[BI MAIN DOOR] AUTHORITATIVE SHELL MATCH: ({}, {}) side={:?}",
+                    requested_x,
+                    requested_z,
+                    side
+                );
+
+                Some((
+                    requested_x,
+                    requested_z,
+                    authoritative_candidate.unwrap(),
+                ))
+            } else {
+                println!(
+                    "[BI MAIN DOOR] AUTHORITATIVE ENTRANCE DOES NOT TOUCH REAL SHELL: ({}, {}) side={:?}",
+                    requested_x,
+                    requested_z,
+                    side
+                );
+
+                let mut fallback_candidates = Vec::new();
+
+                for &(ix, iz) in cached_floor_area {
+                    let candidate = build_candidate(ix, iz, side);
+
+                    if let Some(candidate) = candidate {
+                        let distance =
+                            (ix - requested_x).abs()
+                            + (iz - requested_z).abs();
+
+                        fallback_candidates.push((
+                            distance,
+                            ix,
+                            iz,
+                            candidate,
+                        ));
+                    }
+                }
+
+                fallback_candidates
+                    .into_iter()
+                    .min_by_key(|(distance, _, _, _)| *distance)
+                    .map(|(_, ix, iz, candidate)| {
+                        println!(
+                            "[BI MAIN DOOR] FALLBACK REAL SHELL BOUNDARY: interior=({}, {}) side={:?}",
+                            ix,
+                            iz,
+                            side
+                        );
+
+                        (ix, iz, candidate)
+                    })
+            };
+
+            let Some((interior_anchor_x, interior_anchor_z, (interior_cells, wall_cells))) =
+                candidate
+            else {
+                println!(
+                    "[BI MAIN DOOR] SKIP: no valid real shell boundary found for side={:?}",
+                    side
+                );
+
+                // IMPORTANT:
+                // Never fabricate an entrance when the reconstructed
+                // shell and cached floor do not provide a valid boundary.
+                return;
+            };
+
+            /*
+             * TRANSACTIONAL VALIDATION COMPLETE.
+             *
+             * At this point:
+             *   - every interior cell is cached
+             *   - every wall cell is inside building bounds
+             *   - every wall cell is outside cached floor
+             *   - every wall cell contains real shell material
+             *
+             * Only NOW may geometry be opened.
+             */
+
+            for &(wx, wz) in &wall_cells {
+                for y in door_y..=(door_y + 1) {
+                    editor.set_block_absolute(
+                        AIR,
+                        wx,
+                        y,
+                        wz,
+                        None,
+                        Some(&[]),
+                    );
+                }
             }
+
+            println!(
+                "[BI MAIN DOOR] REAL SHELL OPENED 2-high: wall=({}, {}) cells={}",
+                interior_anchor_x,
+                interior_anchor_z,
+                wall_cells.len()
+            );
+
+            /*
+             * Clear the first interior cells so the entrance is
+             * physically connected to the reconstructed interior.
+             */
+            for &(ix, iz) in &interior_cells {
+                for y in door_y..=(door_y + 1) {
+                    editor.set_block_absolute(
+                        AIR,
+                        ix,
+                        y,
+                        iz,
+                        None,
+                        Some(&[]),
+                    );
+                }
+            }
+
+            /*
+             * Materialize the actual Minecraft door at the REAL
+             * building shell position.
+             *
+             * For a width-2 door, use the first wall cell as the
+             * physical anchor because the current renderer stores
+             * one actual door block pair.
+             */
+            let wall_index =
+                (wall_cells.len().saturating_sub(1)) / 2;
+
+            let (wall_x, wall_z) =
+                wall_cells[wall_index];
+
+            let lower =
+                interior_door_block_with_state(
+                    orientation,
+                    false,
+                    false,
+                    false,
+                );
+
+            let upper =
+                interior_door_block_with_state(
+                    orientation,
+                    true,
+                    false,
+                    false,
+                );
+
+            editor.set_block_with_properties_absolute(
+                lower,
+                wall_x,
+                door_y,
+                wall_z,
+                None,
+                None,
+            );
+
+            editor.set_block_with_properties_absolute(
+                upper,
+                wall_x,
+                door_y + 1,
+                wall_z,
+                None,
+                None,
+            );
+
+            println!(
+                "[BI MAIN DOOR] MATERIALIZED shell=({}, {}) interior=({}, {}) side={:?} width={} y={}..{}",
+                wall_x,
+                wall_z,
+                interior_anchor_x,
+                interior_anchor_z,
+                side,
+                width,
+                door_y,
+                door_y + 1
+            );
         } else {
-            println!("[BI MAIN DOOR] SKIP incomplete authoritative entrance data");
+            println!(
+                "[BI MAIN DOOR] SKIP incomplete authoritative entrance data"
+            );
         }
     }
 
@@ -860,306 +1076,547 @@ bounds=({},{})-({},{}) valid_cells={} y={}",
     //
     // ---------------------------------------------------------
 
-    for door in &planned_building.doorway_plan.doors {
-        let Some(from_room) = planned_building.room_graph.rooms.get(door.from_room) else {
-            println!(
-                "[BI INTERIOR DOOR] SKIP invalid from_room={}",
-                door.from_room
-            );
-            continue;
+    
+for door in &planned_building.doorway_plan.doors {
+    let Some(from_room) =
+        planned_building.room_graph.rooms.get(door.from_room)
+    else {
+        println!(
+            "[BI INTERIOR DOOR] SKIP invalid from_room={}",
+            door.from_room
+        );
+        continue;
+    };
+
+    let Some(to_room) =
+        planned_building.room_graph.rooms.get(door.to_room)
+    else {
+        println!(
+            "[BI INTERIOR DOOR] SKIP invalid to_room={}",
+            door.to_room
+        );
+        continue;
+    };
+
+    // Interior doors only connect rooms on the same floor.
+    if from_room.floor != to_room.floor {
+        println!(
+            "[BI INTERIOR DOOR] SKIP different floors {} -> {}",
+            from_room.floor,
+            to_room.floor
+        );
+        continue;
+    }
+
+    let Some(floor_plan) =
+        planned_building.floor_plans.get(from_room.floor)
+    else {
+        println!(
+            "[BI INTERIOR DOOR] SKIP missing floor plan floor={}",
+            from_room.floor
+        );
+        continue;
+    };
+
+    let Some(from_plan) =
+        floor_plan.rooms.get(from_room.floor_room_index)
+    else {
+        println!(
+            "[BI INTERIOR DOOR] SKIP missing from room plan floor={} room={}",
+            from_room.floor,
+            from_room.floor_room_index
+        );
+        continue;
+    };
+
+    let Some(to_plan) =
+        floor_plan.rooms.get(to_room.floor_room_index)
+    else {
+        println!(
+            "[BI INTERIOR DOOR] SKIP missing to room plan floor={} room={}",
+            to_room.floor,
+            to_room.floor_room_index
+        );
+        continue;
+    };
+
+    let a = from_plan.bounds;
+    let b = to_plan.bounds;
+
+    let floor_y = floor_levels
+        .get(from_room.floor)
+        .copied()
+        .unwrap_or(start_y_offset + (from_room.floor as i32 * 4));
+
+    let requested_width = door.width.max(1);
+
+    // ========================================================
+    // CASE 1
+    // Rooms touch along X.
+    //
+    //      A | B
+    //
+    // Shared wall + 2 cells into A + 2 cells into B.
+    // ========================================================
+
+    if a.max_x + 1 == b.min_x || b.max_x + 1 == a.min_x {
+        let wall_x = if a.max_x + 1 == b.min_x {
+            a.max_x
+        } else {
+            b.max_x
         };
 
-        let Some(to_room) = planned_building.room_graph.rooms.get(door.to_room) else {
-            println!("[BI INTERIOR DOOR] SKIP invalid to_room={}", door.to_room);
-            continue;
-        };
+        let shared_min_z = a.min_z.max(b.min_z);
+        let shared_max_z = a.max_z.min(b.max_z);
 
-        // Interior doors are same-floor connections only.
-        if from_room.floor != to_room.floor {
+        if shared_min_z > shared_max_z {
             println!(
-                "[BI INTERIOR DOOR] SKIP different floors {} -> {}",
-                from_room.floor, to_room.floor
+                "[BI INTERIOR DOOR] SKIP no shared Z wall"
             );
             continue;
         }
 
-        let Some(floor_plan) = planned_building.floor_plans.get(from_room.floor) else {
-            println!(
-                "[BI INTERIOR DOOR] SKIP missing floor plan floor={}",
-                from_room.floor
-            );
+        let available = shared_max_z - shared_min_z + 1;
+        let actual_width = requested_width.min(available);
+
+        if actual_width <= 0 {
             continue;
-        };
+        }
 
-        let Some(from_plan) = floor_plan.rooms.get(from_room.floor_room_index) else {
-            println!(
-                "[BI INTERIOR DOOR] SKIP missing from room plan floor={} room={}",
-                from_room.floor, from_room.floor_room_index
-            );
-            continue;
-        };
+        let center_z =
+            door.z.clamp(shared_min_z, shared_max_z);
 
-        let Some(to_plan) = floor_plan.rooms.get(to_room.floor_room_index) else {
-            println!(
-                "[BI INTERIOR DOOR] SKIP missing to room plan floor={} room={}",
-                to_room.floor, to_room.floor_room_index
-            );
-            continue;
-        };
+        let mut start_z =
+            center_z - ((actual_width - 1) / 2);
 
-        let a = from_plan.bounds;
-        let b = to_plan.bounds;
+        let mut end_z =
+            start_z + actual_width - 1;
 
-        let floor_y = floor_levels
-            .get(from_room.floor)
-            .copied()
-            .unwrap_or(start_y_offset + (from_room.floor as i32 * 4));
+        if start_z < shared_min_z {
+            start_z = shared_min_z;
+            end_z = start_z + actual_width - 1;
+        }
 
-        let requested_width = door.width.max(1);
+        if end_z > shared_max_z {
+            end_z = shared_max_z;
+            start_z = end_z - actual_width + 1;
+        }
 
-        // -----------------------------------------------------
-        // CASE 1:
-        // Vertical shared wall.
-        // -----------------------------------------------------
-        //
-        // Rooms touch along X:
-        //
-        //     A | B
-        //
-        // The wall itself is the shared X boundary.
-        // -----------------------------------------------------
-
-        if a.max_x + 1 == b.min_x || b.max_x + 1 == a.min_x {
-            let wall_x = if a.max_x + 1 == b.min_x {
-                a.max_x
+        // Determine which direction each room extends
+        // away from the shared wall.
+        let from_inside_x_1 =
+            if a.max_x == wall_x {
+                wall_x - 1
             } else {
-                b.max_x
+                wall_x + 1
             };
 
-            let shared_min_z = a.min_z.max(b.min_z);
-            let shared_max_z = a.max_z.min(b.max_z);
+        let from_inside_x_2 =
+            if a.max_x == wall_x {
+                wall_x - 2
+            } else {
+                wall_x + 2
+            };
 
-            if shared_min_z > shared_max_z {
-                println!("[BI INTERIOR DOOR] SKIP no shared Z wall");
-                continue;
-            }
+        let to_inside_x_1 =
+            if b.max_x == wall_x {
+                wall_x - 1
+            } else {
+                wall_x + 1
+            };
 
-            let available = shared_max_z - shared_min_z + 1;
-            let actual_width = requested_width.min(available);
+        let to_inside_x_2 =
+            if b.max_x == wall_x {
+                wall_x - 2
+            } else {
+                wall_x + 2
+            };
 
-            if actual_width <= 0 {
-                continue;
-            }
+        // ----------------------------------------------------
+        // TRANSACTIONAL VALIDATION
+        // ----------------------------------------------------
 
-            let center_z = door.z.clamp(shared_min_z, shared_max_z);
+        let mut valid = true;
 
-            let mut start_z = center_z - ((actual_width - 1) / 2);
+        for z in start_z..=end_z {
+            let required_cells = [
+                (wall_x, z),
+                (from_inside_x_1, z),
+                (from_inside_x_2, z),
+                (to_inside_x_1, z),
+                (to_inside_x_2, z),
+            ];
 
-            let mut end_z = start_z + actual_width - 1;
-
-            if start_z < shared_min_z {
-                start_z = shared_min_z;
-                end_z = start_z + actual_width - 1;
-            }
-
-            if end_z > shared_max_z {
-                end_z = shared_max_z;
-                start_z = end_z - actual_width + 1;
-            }
-
-            // -------------------------------------------------
-            // TRANSACTIONAL VALIDATION
-            //
-            // Validate the complete horizontal span before
-            // writing ANY AIR.
-            // -------------------------------------------------
-
-            let mut valid = true;
-
-            for z in start_z..=end_z {
-                if !cached_floor_area_set.contains(&(wall_x, z)) {
+            for &(check_x, check_z) in &required_cells {
+                if !cached_floor_area_set
+                    .contains(&(check_x, check_z))
+                {
                     println!(
                         "[BI INTERIOR DOOR] REJECT outside cached_floor_area: ({}, {})",
-                        wall_x, z
+                        check_x,
+                        check_z
                     );
+
                     valid = false;
                     break;
                 }
             }
 
             if !valid {
-                continue;
+                break;
             }
+        }
 
-            // -------------------------------------------------
-            // Materialize ONLY after complete validation.
-            // -------------------------------------------------
-
-            for z in start_z..=end_z {
-                for y in (floor_y + 1)..=(floor_y + 2) {
-                    editor.set_block_absolute(AIR, wall_x, y, z, None, Some(&[]));
-                }
-            }
-
-            let center_z = start_z + ((actual_width - 1) / 2);
-
-            let lower = interior_door_block_with_state("east", false, false, false);
-
-            let upper = interior_door_block_with_state("east", true, false, false);
-
-            editor.set_block_with_properties_absolute(
-                lower,
-                wall_x,
-                floor_y + 1,
-                center_z,
-                None,
-                None,
-            );
-
-            editor.set_block_with_properties_absolute(
-                upper,
-                wall_x,
-                floor_y + 2,
-                center_z,
-                None,
-                None,
-            );
-
-            println!(
-                "[BI INTERIOR DOOR] MATERIALIZED vertical wall=({}, {}) width={} floor_y={}",
-                wall_x, center_z, actual_width, floor_y
-            );
-
+        if !valid {
             continue;
         }
 
-        // -----------------------------------------------------
-        // CASE 2:
-        // Horizontal shared wall.
-        // -----------------------------------------------------
+        // ----------------------------------------------------
+        // MATERIALIZE
         //
-        // Rooms touch along Z:
-        //
-        //     A
-        //     -
-        //     B
-        //
-        // The wall itself is the shared Z boundary.
-        // -----------------------------------------------------
+        // Shared wall + 2 cells on BOTH sides.
+        // Everything is 2 blocks high.
+        // ----------------------------------------------------
 
-        if a.max_z + 1 == b.min_z || b.max_z + 1 == a.min_z {
-            let wall_z = if a.max_z + 1 == b.min_z {
-                a.max_z
-            } else {
-                b.max_z
-            };
+        for z in start_z..=end_z {
+            for y in (floor_y + 1)..=(floor_y + 2) {
+                // Shared wall.
+                editor.set_block_absolute(
+                    AIR,
+                    wall_x,
+                    y,
+                    z,
+                    None,
+                    Some(&[]),
+                );
 
-            let shared_min_x = a.min_x.max(b.min_x);
-            let shared_max_x = a.max_x.min(b.max_x);
+                // From-room depth 1.
+                editor.set_block_absolute(
+                    AIR,
+                    from_inside_x_1,
+                    y,
+                    z,
+                    None,
+                    Some(&[]),
+                );
 
-            if shared_min_x > shared_max_x {
-                println!("[BI INTERIOR DOOR] SKIP no shared X wall");
-                continue;
+                // From-room depth 2.
+                editor.set_block_absolute(
+                    AIR,
+                    from_inside_x_2,
+                    y,
+                    z,
+                    None,
+                    Some(&[]),
+                );
+
+                // To-room depth 1.
+                editor.set_block_absolute(
+                    AIR,
+                    to_inside_x_1,
+                    y,
+                    z,
+                    None,
+                    Some(&[]),
+                );
+
+                // To-room depth 2.
+                editor.set_block_absolute(
+                    AIR,
+                    to_inside_x_2,
+                    y,
+                    z,
+                    None,
+                    Some(&[]),
+                );
             }
-
-            let available = shared_max_x - shared_min_x + 1;
-            let actual_width = requested_width.min(available);
-
-            if actual_width <= 0 {
-                continue;
-            }
-
-            let center_x = door.x.clamp(shared_min_x, shared_max_x);
-
-            let mut start_x = center_x - ((actual_width - 1) / 2);
-
-            let mut end_x = start_x + actual_width - 1;
-
-            if start_x < shared_min_x {
-                start_x = shared_min_x;
-                end_x = start_x + actual_width - 1;
-            }
-
-            if end_x > shared_max_x {
-                end_x = shared_max_x;
-                start_x = end_x - actual_width + 1;
-            }
-
-            // -------------------------------------------------
-            // TRANSACTIONAL VALIDATION
-            //
-            // Validate the complete horizontal span before
-            // writing ANY AIR.
-            // -------------------------------------------------
-
-            let mut valid = true;
-
-            for x in start_x..=end_x {
-                if !cached_floor_area_set.contains(&(x, wall_z)) {
-                    println!(
-                        "[BI INTERIOR DOOR] REJECT outside cached_floor_area: ({}, {})",
-                        x, wall_z
-                    );
-                    valid = false;
-                    break;
-                }
-            }
-
-            if !valid {
-                continue;
-            }
-
-            // -------------------------------------------------
-            // Materialize ONLY after complete validation.
-            // -------------------------------------------------
-
-            for x in start_x..=end_x {
-                for y in (floor_y + 1)..=(floor_y + 2) {
-                    editor.set_block_absolute(AIR, x, y, wall_z, None, Some(&[]));
-                }
-            }
-
-            let center_x = start_x + ((actual_width - 1) / 2);
-
-            let lower = interior_door_block_with_state("north", false, false, false);
-
-            let upper = interior_door_block_with_state("north", true, false, false);
-
-            editor.set_block_with_properties_absolute(
-                lower,
-                center_x,
-                floor_y + 1,
-                wall_z,
-                None,
-                None,
-            );
-
-            editor.set_block_with_properties_absolute(
-                upper,
-                center_x,
-                floor_y + 2,
-                wall_z,
-                None,
-                None,
-            );
-
-            println!(
-                "[BI INTERIOR DOOR] MATERIALIZED horizontal wall=({}, {}) width={} floor_y={}",
-                center_x, wall_z, actual_width, floor_y
-            );
-
-            continue;
         }
 
-        // -----------------------------------------------------
-        // No physical shared wall.
-        // -----------------------------------------------------
+        let center_z =
+            start_z + ((actual_width - 1) / 2);
+
+        let lower =
+            interior_door_block_with_state(
+                "east",
+                false,
+                false,
+                false,
+            );
+
+        let upper =
+            interior_door_block_with_state(
+                "east",
+                true,
+                false,
+                false,
+            );
+
+        editor.set_block_with_properties_absolute(
+            lower,
+            wall_x,
+            floor_y + 1,
+            center_z,
+            None,
+            None,
+        );
+
+        editor.set_block_with_properties_absolute(
+            upper,
+            wall_x,
+            floor_y + 2,
+            center_z,
+            None,
+            None,
+        );
 
         println!(
-            "[BI INTERIOR DOOR] SKIP no physical shared wall: from={} to={}",
-            door.from_room, door.to_room
+            "[BI INTERIOR DOOR] MATERIALIZED vertical wall=({}, {}) depth=2+2 width={} floor_y={}",
+            wall_x,
+            center_z,
+            actual_width,
+            floor_y
         );
+
+        continue;
     }
+
+    // ========================================================
+    // CASE 2
+    // Rooms touch along Z.
+    //
+    //      A
+    //      -
+    //      B
+    //
+    // Shared wall + 2 cells into A + 2 cells into B.
+    // ========================================================
+
+    if a.max_z + 1 == b.min_z || b.max_z + 1 == a.min_z {
+        let wall_z = if a.max_z + 1 == b.min_z {
+            a.max_z
+        } else {
+            b.max_z
+        };
+
+        let shared_min_x = a.min_x.max(b.min_x);
+        let shared_max_x = a.max_x.min(b.max_x);
+
+        if shared_min_x > shared_max_x {
+            println!(
+                "[BI INTERIOR DOOR] SKIP no shared X wall"
+            );
+            continue;
+        }
+
+        let available =
+            shared_max_x - shared_min_x + 1;
+
+        let actual_width =
+            requested_width.min(available);
+
+        if actual_width <= 0 {
+            continue;
+        }
+
+        let center_x =
+            door.x.clamp(shared_min_x, shared_max_x);
+
+        let mut start_x =
+            center_x - ((actual_width - 1) / 2);
+
+        let mut end_x =
+            start_x + actual_width - 1;
+
+        if start_x < shared_min_x {
+            start_x = shared_min_x;
+            end_x = start_x + actual_width - 1;
+        }
+
+        if end_x > shared_max_x {
+            end_x = shared_max_x;
+            start_x = end_x - actual_width + 1;
+        }
+
+        let from_inside_z_1 =
+            if a.max_z == wall_z {
+                wall_z - 1
+            } else {
+                wall_z + 1
+            };
+
+        let from_inside_z_2 =
+            if a.max_z == wall_z {
+                wall_z - 2
+            } else {
+                wall_z + 2
+            };
+
+        let to_inside_z_1 =
+            if b.max_z == wall_z {
+                wall_z - 1
+            } else {
+                wall_z + 1
+            };
+
+        let to_inside_z_2 =
+            if b.max_z == wall_z {
+                wall_z - 2
+            } else {
+                wall_z + 2
+            };
+
+        // ----------------------------------------------------
+        // TRANSACTIONAL VALIDATION
+        // ----------------------------------------------------
+
+        let mut valid = true;
+
+        for x in start_x..=end_x {
+            let required_cells = [
+                (x, wall_z),
+                (x, from_inside_z_1),
+                (x, from_inside_z_2),
+                (x, to_inside_z_1),
+                (x, to_inside_z_2),
+            ];
+
+            for &(check_x, check_z) in &required_cells {
+                if !cached_floor_area_set
+                    .contains(&(check_x, check_z))
+                {
+                    println!(
+                        "[BI INTERIOR DOOR] REJECT outside cached_floor_area: ({}, {})",
+                        check_x,
+                        check_z
+                    );
+
+                    valid = false;
+                    break;
+                }
+            }
+
+            if !valid {
+                break;
+            }
+        }
+
+        if !valid {
+            continue;
+        }
+
+        // ----------------------------------------------------
+        // MATERIALIZE
+        // ----------------------------------------------------
+
+        for x in start_x..=end_x {
+            for y in (floor_y + 1)..=(floor_y + 2) {
+                // Shared wall.
+                editor.set_block_absolute(
+                    AIR,
+                    x,
+                    y,
+                    wall_z,
+                    None,
+                    Some(&[]),
+                );
+
+                // From-room depth 1.
+                editor.set_block_absolute(
+                    AIR,
+                    x,
+                    y,
+                    from_inside_z_1,
+                    None,
+                    Some(&[]),
+                );
+
+                // From-room depth 2.
+                editor.set_block_absolute(
+                    AIR,
+                    x,
+                    y,
+                    from_inside_z_2,
+                    None,
+                    Some(&[]),
+                );
+
+                // To-room depth 1.
+                editor.set_block_absolute(
+                    AIR,
+                    x,
+                    y,
+                    to_inside_z_1,
+                    None,
+                    Some(&[]),
+                );
+
+                // To-room depth 2.
+                editor.set_block_absolute(
+                    AIR,
+                    x,
+                    y,
+                    to_inside_z_2,
+                    None,
+                    Some(&[]),
+                );
+            }
+        }
+
+        let center_x =
+            start_x + ((actual_width - 1) / 2);
+
+        let lower =
+            interior_door_block_with_state(
+                "north",
+                false,
+                false,
+                false,
+            );
+
+        let upper =
+            interior_door_block_with_state(
+                "north",
+                true,
+                false,
+                false,
+            );
+
+        editor.set_block_with_properties_absolute(
+            lower,
+            center_x,
+            floor_y + 1,
+            wall_z,
+            None,
+            None,
+        );
+
+        editor.set_block_with_properties_absolute(
+            upper,
+            center_x,
+            floor_y + 2,
+            wall_z,
+            None,
+            None,
+        );
+
+        println!(
+            "[BI INTERIOR DOOR] MATERIALIZED horizontal wall=({}, {}) depth=2+2 width={} floor_y={}",
+            center_x,
+            wall_z,
+            actual_width,
+            floor_y
+        );
+
+        continue;
+    }
+
+    println!(
+        "[BI INTERIOR DOOR] SKIP no physical shared wall: from={} to={}",
+        door.from_room,
+        door.to_room
+    );
+}
+
 
     // ---------------------------------------------------------
     // Furniture rendering
