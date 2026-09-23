@@ -1,8 +1,8 @@
-## 🗺️ RWM — Real World Minecraft
+# 🗺️ RWM — Real World Minecraft
 
 «把真實世界帶進 Minecraft，不只是複製地圖，而是重建它的空間。»
 
-# RWM（Real World Minecraft）是一個 Local-First、CLI-First、Multi-Source Real-World Reconstruction Engine。
+**RWM（Real World Minecraft）是一個 Local-First、CLI-First、Multi-Source Real-World Reconstruction Engine。**
 
 RWM 將真實世界的：
 
@@ -33,7 +33,7 @@ RWM 的核心目標不是：
 
 RWM 的設計建立在四個核心原則：
 
-# 🌍 Real-World First
+## 🌍 Real-World First
 
 真實世界資料是生成的基礎，而不是單純使用隨機程序生成一個「看起來像城市」的世界。
 
@@ -63,11 +63,13 @@ RWM 優先使用本地已有的：
 
 只有在本地沒有可用資料時，才向公開第三方資料來源取得資料。
 
+```
 Bundled Assets
 ↓
 Local Assets / Cache
 ↓
 Public Data Sources
+```
 
 網路是資料來源，不是 RWM 核心 Engine 的依賴。
 
@@ -83,19 +85,23 @@ GUI 若存在，只是 RWM 的使用者介面層，而不是核心生成系統�
 
 核心關係：
 
+```
 CLI
 ↓
 RWM Engine
 ↓
 World Generation
+```
 
 而不是：
 
+```
 GUI
 ↓
 GUI-specific Logic
 ↓
 World Generation
+```
 
 ## 🧩 Multi-Source
 
@@ -113,10 +119,12 @@ RWM 從真實地球上的 Geographic Bounding Box（BBox）開始。
 
 使用者可以指定：
 
+```
 min latitude
 min longitude
 max latitude
 max longitude
+```
 
 BBox 可以代表：
 
@@ -141,11 +149,13 @@ BBox 內的真實世界資料是 World Reconstruction 的核心範圍。
 
 RWM 將：
 
+```
 Real-World Coordinates
 ↓
 Geographic Projection
 ↓
 Minecraft Coordinates
+```
 
 支援：
 
@@ -182,6 +192,7 @@ RWM 使用多種公開與第三方資料來源。
 
 資料會經過：
 
+```
 Data Acquisition
 ↓
 Data Processing
@@ -193,9 +204,11 @@ Data Fusion
 World Understanding
 ↓
 World Generation
+```
 
 主要資料來源包括：
 
+```
 Data | Source
 Geographic / Map Data | OpenStreetMap
 OSM Query | Overpass API
@@ -210,6 +223,7 @@ Land Cover | ESA WorldCover
 3D Models / Media | Wikimedia Commons
 3D / Metadata | Wikidata
 Local Minecraft Assets | RWM Bundled / Local Assets
+```
 
 RWM 不依賴單一中央世界資料庫。
 
@@ -260,6 +274,7 @@ Overture Maps 用於補充與增強建築及其他地理資料。
 
 RWM 可以將 OSM 與 Overture 的建築資訊進行資料融合。
 
+```
 OSM
 +
 Overture
@@ -267,6 +282,7 @@ Overture
 Building Dataset
 ↓
 RWM Building Engine
+```
 
 Overture Maps 的公開 STAC / S3 資料來源可作為建築資料取得管線的一部分。
 
@@ -285,6 +301,7 @@ RWM 使用真實世界 Elevation Data 建立 Minecraft Terrain。
 
 資料流程：
 
+```
 Elevation Data
 ↓
 Elevation Processing
@@ -292,6 +309,7 @@ Elevation Processing
 Terrain Reconstruction
 ↓
 Minecraft Terrain
+```
 
 可以重建：
 
@@ -324,11 +342,13 @@ RWM 可以使用 ESA WorldCover 等土地覆蓋資料判斷真實世界地表。
 
 土地覆蓋可以參與：
 
+```
 Land Cover
 ↓
 Environment Understanding
 ↓
 Terrain / Vegetation Generation
+```
 
 使自然環境具有真實世界資料基礎。
 
@@ -382,11 +402,13 @@ RWM 同時支援 Bundled / Local Assets，降低對網路模型來源的依賴�
 
 RWM 的資產解析遵循：
 
+```
 RWM Bundled Assets
 ↓
 Local Assets / Cache
 ↓
 Third-Party Network Sources
+```
 
 如果本地已經存在可使用的：
 
@@ -442,6 +464,7 @@ NBTX / Minecraft assets 可以作為已取得的本地或 Bundled 資產被 Worl
 
 RWM World Engine 是整個系統的核心。
 
+```
 Real-World Data
 ↓
 Data Processing
@@ -455,6 +478,7 @@ World Understanding
 Procedural World Generation
 ↓
 Minecraft World
+```
 
 World Engine 負責：
 
@@ -470,7 +494,7 @@ World Engine 負責：
 - 10. Object Generation
 - 11. World Output
 
-# World Reconstruction Engine 對 BBox 內的真實世界幾何具有 authoritative role。
+**World Reconstruction Engine 對 BBox 內的真實世界幾何具有 authoritative role。**
 
 ---
 
@@ -494,6 +518,7 @@ RWM 可以將真實世界的人造環境重建成 Minecraft 結構。
 
 例如：
 
+```
 Real Road Data
 ↓
 Road Processing
@@ -501,14 +526,17 @@ Road Processing
 Road Generation
 ↓
 Minecraft Road
+```
 
 以及：
 
+```
 Building Footprint
 ↓
 Building Reconstruction
 ↓
 Minecraft Building
+```
 
 ---
 
@@ -534,7 +562,7 @@ RWM 的世界還原核心負責建立真實世界建築的：
 
 «「真實世界中的這棟建築長什麼樣？」»
 
-# World Reconstruction Engine 是建築 Exterior Geometry 的 authoritative source。
+**World Reconstruction Engine 是建築 Exterior Geometry 的 authoritative source。**
 
 ---
 
@@ -575,7 +603,7 @@ Building Intelligence 可以讀取：
 - Lighting Requirements
 - Interior Circulation
 
-# Building Intelligence 是 interpretation / planning layer，而不是 Exterior Reconstruction Layer。
+**Building Intelligence 是 interpretation / planning layer，而不是 Exterior Reconstruction Layer。**
 
 ---
 
@@ -587,17 +615,20 @@ RWM Interior Engine 不重新生成建築外窗。
 
 世界還原 Engine 已經建立：
 
+```
 Building
 ├── Exterior Geometry
 ├── Walls
 ├── Floors
 ├── Roof
 └── Existing Windows
+```
 
 Interior Intelligence 只讀取這些資訊。
 
 例如：
 
+```
 Existing Windows
 ↓
 Window Position
@@ -609,6 +640,7 @@ Window Floor
 Daylight Analysis
 ↓
 Room Planning
+```
 
 因此室內系統知道：
 
@@ -649,6 +681,7 @@ Daylight 可以影響：
 
 因此窗戶不是單純的裝飾，而是：
 
+```
 Real-World Window
 ↓
 Building Intelligence
@@ -656,6 +689,7 @@ Building Intelligence
 Daylight Analysis
 ↓
 Interior Planning
+```
 
 ---
 
@@ -669,6 +703,7 @@ RWM 的 Interior Engine 不只是：
 
 流程：
 
+```
 Building Type
 ↓
 Building Geometry
@@ -698,6 +733,7 @@ Furniture
 Lighting
 ↓
 Interior Decoration
+```
 
 Interior Engine 的輸入是既有 World Reconstruction 結果。
 
@@ -741,6 +777,7 @@ Building Type 可以影響：
 
 例如 School：
 
+```
 School
 ├── Entrance
 ├── Lobby
@@ -749,9 +786,11 @@ School
 ├── Teacher / Office Space
 ├── Toilet
 └── Storage
+```
 
 Hospital：
 
+```
 Hospital
 ├── Main Entrance
 ├── Reception
@@ -761,10 +800,11 @@ Hospital
 ├── Nursing Station
 ├── Toilet
 └── Utility / Storage
+```
 
 不同 Building Type 使用不同 Room Requirements。
 
-# Room templates are planning rules rather than a guarantee that every real-world building contains exactly the same rooms.
+**Room templates are planning rules rather than a guarantee that every real-world building contains exactly the same rooms.**
 
 ---
 
@@ -795,15 +835,19 @@ Room Allocation 不只是固定數量。
 
 因此：
 
+```
 Small Building
 ↓
 Smaller Room Plan
+```
 
+```
 Large Building
 ↓
 More Rooms
 ↓
 More Complex Layout
+```
 
 ---
 
@@ -826,7 +870,7 @@ Floor Plan Engine 根據實際建築幾何生成空間配置。
 
 同一種 Building Type 可以產生不同的 Floor Plan。
 
-# Floor Plan 必須受既有建築幾何約束，而不是重新定義 Exterior Geometry。
+**Floor Plan 必須受既有建築幾何約束，而不是重新定義 Exterior Geometry。**
 
 ---
 
@@ -836,6 +880,7 @@ RWM 將室內空間視為 Spatial Graph。
 
 例如：
 
+```
 Entrance
 ↓
 Lobby
@@ -846,6 +891,7 @@ Corridor
 Room A     Room B
 ↓          ↓
 Storage    Toilet
+```
 
 Room Graph 用於：
 
@@ -870,11 +916,13 @@ RWM 處理兩種入口：
 
 Exterior Entrance
 
+```
 Outside
 ↓
 Building Entrance
 ↓
 Interior
+```
 
 系統會在可取得真實入口資訊時使用相關資訊。
 
@@ -892,11 +940,13 @@ Interior
 
 Interior Doors
 
+```
 Room A
 ↓
 Interior Door
 ↓
 Room B
+```
 
 門的位置考慮：
 
@@ -907,7 +957,7 @@ Room B
 - Circulation
 - Building Structure
 
-# 門因此是空間拓撲的一部分，而不是隨機放置的裝飾。
+**門因此是空間拓撲的一部分，而不是隨機放置的裝飾。**
 
 ---
 
@@ -936,6 +986,7 @@ RWM Interior Engine 具有室內動線規劃。
 
 家具由：
 
+```
 Building
 ↓
 Room
@@ -945,6 +996,7 @@ Room Type
 Furniture Profile
 ↓
 Placement
+```
 
 決定。
 
@@ -1002,7 +1054,7 @@ Interior Engine 可以根據：
 
 建立室內人工照明配置。
 
-# 自然採光與人工照明因此是同一個 Interior Planning Pipeline 的一部分。
+**自然採光與人工照明因此是同一個 Interior Planning Pipeline 的一部分。**
 
 ---
 
@@ -1036,6 +1088,7 @@ RWM 不希望所有建築都完全一樣。
 
 RWM 明確區分：
 
+```
 WORLD RECONSTRUCTION ENGINE
 │
 │ authoritative
@@ -1053,6 +1106,7 @@ BUILDING INTELLIGENCE
 │
 ▼
 INTERIOR ENGINE
+```
 
 Interior Engine 可以：
 
@@ -1079,7 +1133,7 @@ Interior Engine 不應：
 - 修改 Exterior Reconstruction
 - 修改原始世界還原資料
 
-# World Reconstruction remains authoritative.
+**World Reconstruction remains authoritative.**
 
 ---
 
@@ -1087,6 +1141,7 @@ Interior Engine 不應：
 
 RWM 將：
 
+```
 Elevation
 +
 Land Cover
@@ -1094,6 +1149,7 @@ Land Cover
 Climate
 +
 Water
+```
 
 融合成 Environment Generation。
 
@@ -1109,7 +1165,7 @@ Water
 
 ---
 
-# 🌊 31. Outside Terrain
+## 🌊 31. Outside Terrain
 
 BBox 外的世界可以由使用者指定。
 
@@ -1124,17 +1180,21 @@ BBox 外的世界可以由使用者指定。
 
 核心規則：
 
+```
 BBox Inside
 ↓
 Real-World Reconstruction
+```
 
+```
 BBox Outside
 ↓
 User-Selected Outside Terrain
+```
 
 Outside Terrain 不應覆蓋 BBox 內的真實世界區域。
 
-# Outside Terrain 是 BBox 外部環境生成層，而不是 BBox 內真實世界重建的一部分。
+**Outside Terrain 是 BBox 外部環境生成層，而不是 BBox 內真實世界重建的一部分。**
 
 ---
 
@@ -1144,9 +1204,11 @@ Outside Terrain 不應覆蓋 BBox 內的真實世界區域。
 
 可以建立：
 
+```
 Real-World Area
 +
 Controlled Outside Environment
+```
 
 例如：
 
@@ -1215,19 +1277,23 @@ CLI 可以控制的核心設定包括：
 
 核心理念：
 
+```
 CLI
 ↓
 RWM Engine
 ↓
 World Generation
+```
 
 而不是：
 
+```
 GUI
 ↓
 GUI-specific Logic
 ↓
 World Generation
+```
 
 RWM 的核心能力不應依賴 GUI。
 
@@ -1237,6 +1303,7 @@ RWM 的核心能力不應依賴 GUI。
 
 RWM 的資料與資產策略：
 
+```
 LOCAL FIRST
 │
 ├── Bundled Assets
@@ -1247,6 +1314,7 @@ LOCAL FIRST
 │
 ▼
 Network Sources
+```
 
 這代表：
 
@@ -1257,7 +1325,7 @@ Network Sources
 - 不依賴單一中央服務
 - RWM 核心生成能力可以對已取得的本地資料進行後續處理
 
-# Local-First 是資料與資產策略，不等於所有 Real-World Data Acquisition 都必須永久離線。
+**Local-First 是資料與資產策略，不等於所有 Real-World Data Acquisition 都必須永久離線。**
 
 ---
 
@@ -1267,34 +1335,41 @@ RWM 不把所有能力綁定在單一 API。
 
 例如 Elevation 可以使用不同來源：
 
+```
 Elevation
 ├── Mapterhorn
 ├── AWS Terrain
 ├── USGS 3DEP
 └── Regional Providers
+```
 
 建築：
 
+```
 Building Data
 ├── OSM
 └── Overture
+```
 
 3D：
 
+```
 3D Models
 ├── Local Assets
 ├── 3DMR
 ├── Wikimedia
 └── Wikidata
+```
 
 因此某個第三方來源失效時，RWM 架構仍可以使用其他來源或本地資料。
 
-# 這也是 RWM Multi-Source / Resilient Architecture 的核心設計之一。
+**這也是 RWM Multi-Source / Resilient Architecture 的核心設計之一。**
 
 ---
 
 ## 🏗️ 37. Complete RWM Architecture
 
+```
                      🌍 REAL WORLD
                           │
                           ▼
@@ -1324,7 +1399,9 @@ Building Data
    ┌──────────────────────┼──────────────────────┐
    │                      │                      │
    ▼                      ▼                      ▼
+```
 
+```
 🏙️ STRUCTURES           ⛰️ TERRAIN           🌳 ENVIRONMENT
 │                      │                      │
 ▼                      ▼                      ▼
@@ -1369,6 +1446,7 @@ Building Data
 │
 ▼
 🌍 RWM WORLD
+```
 
 ---
 
@@ -1376,6 +1454,7 @@ Building Data
 
 完整生成流程：
 
+```
 Real World
 ↓
 Geographic BBox
@@ -1418,6 +1497,7 @@ Interior Intelligence
 └── Lighting
 ↓
 Minecraft World
+```
 
 ---
 
@@ -1429,6 +1509,7 @@ Map → Blocks
 
 而是：
 
+```
 Real World
 ↓
 Geospatial Data
@@ -1444,6 +1525,7 @@ Interior Understanding
 Procedural Reconstruction
 ↓
 Minecraft
+```
 
 這讓 RWM 同時處理：
 
@@ -1524,7 +1606,7 @@ Third-party 3D Models。
 
 - RWM Bundled / Local Assets
 
-# RWM 自身 Bundled Assets、Local Assets、NBTX / Minecraft Assets 與 Local Cache。
+**RWM 自身 Bundled Assets、Local Assets、NBTX / Minecraft Assets 與 Local Cache。**
 
 RWM 不擁有上述第三方資料。
 
@@ -1545,6 +1627,7 @@ RWM 目前作為獨立專案持續開發。
 
 RWM 的設計方向是：
 
+```
 Independent Product
 +
 Local-First
@@ -1556,6 +1639,7 @@ Multi-Source
 Open Data
 +
 Modular World Engine
+```
 
 - RWM 不以單一官方服務作為核心世界生成能力的依賴。
 
@@ -1634,6 +1718,7 @@ Real World Data
 
 經過：
 
+```
 Data
 ↓
 Understanding
@@ -1641,18 +1726,19 @@ Understanding
 Reconstruction
 ↓
 Procedural Generation
+```
 
 最後成為：
 
-# 🌍 A Minecraft World Built From The Real World
+**🌍 A Minecraft World Built From The Real World**
 
-# RWM — Real World Minecraft
+**RWM — Real World Minecraft**
 
 «把真實世界帶進 Minecraft，不只是複製它的地圖，而是重建它的空間。»
 
 ---
 
-### 📬 聯繫創作者
+## 📬 聯繫創作者
 
 - Instagram：[a370373/XRH](https://instagram.com/a370373)
 - 本人17歲🤔 做的不好請見諒
@@ -1671,7 +1757,7 @@ Procedural Generation
 
 ---
 
-### 🤖 AI 協作
+## 🤖 AI 協作
 
 RWM 由 a370373/XRH 發起、設計與開發。
 
