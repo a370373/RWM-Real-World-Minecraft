@@ -1664,8 +1664,12 @@ Procedural Generation
 
 ## 👀作品 & 產品 集
 
-- [MyAI-Offline Personal AI Agent System](https://github.com/a370373/MyAI-Offline-Personal-AI-Agent-System-)
+- [Cyber-Fly-Android-Bridge](https://github.com/a370373/Cyber-Fly-Android-Bridge)
+- [My-ADB-Shell](https://github.com/a370373/My-ADB-Shell/tree/main)
+- [Cyber-Fly](https://github.com/a370373/Cyber-Fly)
+- [MyOS](https://github.com/a370373/MyOS)
 - [RWM-1:1 Real World Minecraft](https://github.com/a370373/RWM-Real-World-Minecraft)
+- [MyAI-Offline Personal AI Agent System](https://github.com/a370373/MyAI-Offline-Personal-AI-Agent-System-/tree/main)
 - [WCL - Web Clone Lab](https://github.com/a370373/web-clone-lab/)
 - 持續增加中…👀
 
